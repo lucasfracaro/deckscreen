@@ -29,6 +29,7 @@ import decky
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules"))
 import dsu  # noqa: E402
+import layouts  # noqa: E402
 
 API_PORT = 47555
 DISCOVERY_PORT = 47556
@@ -45,6 +46,8 @@ CODECS = ("auto", "H.264", "HEVC")
 # Motion: off; "dsu" = serve the gyro to emulators on the PC (Steam Input stays on);
 # "direct" = Steam Input off so Moonlight forwards the gyro (loses trackpad-as-mouse).
 MOTION_MODES = ("off", "dsu", "direct")
+# Steam Input layout of the shortcut: auto (by the PC profile), a fixed one, or leave Steam's choice.
+LAYOUT_MODES = ("auto", "desktop", "game", "steam")
 
 DEFAULTS = {
     "hosts": {},             # id -> {ip, port, name, key, mac, wired, capability}
@@ -59,6 +62,7 @@ DEFAULTS = {
     "audio_on_host": False,
     "absolute_touch": True,  # touchscreen = direct clicks on the Deck screen
     "motion": "dsu",         # see MOTION_MODES
+    "layout": "auto",        # see LAYOUT_MODES
     "shortcut_app_id": 0,
 }
 
@@ -84,6 +88,8 @@ def _load() -> dict:
     if "gyro" in s:
         s["motion"] = "direct" if s.pop("gyro") else "dsu"
         changed = True
+    if s.get("layout") not in LAYOUT_MODES:
+        s["layout"] = "auto"
     if s.get("motion") not in MOTION_MODES:
         s["motion"] = "dsu"
     if not s.get("device_id"):
@@ -304,7 +310,7 @@ class Plugin:
                   "paired": bool(v.get("key")), "mac": v.get("mac") or "", "wired": v.get("wired"),
                   "capability": v.get("capability", "")} for k, v in s["hosts"].items()]
         out = {k: s[k] for k in ("resolution", "fps", "bitrate", "preset", "codec", "overlay", "audio_on_host",
-                                 "absolute_touch", "motion", "shortcut_app_id", "active")}
+                                 "absolute_touch", "motion", "layout", "shortcut_app_id", "active")}
         out["hosts"] = hosts
         out["host"] = next((h for h in hosts if h["id"] == s["active"]), None)
         return out
@@ -321,6 +327,8 @@ class Plugin:
             s["preset"] = patch["preset"]
         if patch.get("codec") in CODECS:
             s["codec"] = patch["codec"]
+        if patch.get("layout") in LAYOUT_MODES:
+            s["layout"] = patch["layout"]
         if patch.get("motion") in MOTION_MODES:
             s["motion"] = patch["motion"]
         for k in ("audio_on_host", "absolute_touch", "overlay"):
@@ -518,6 +526,26 @@ class Plugin:
             return {"ok": True}
         return await asyncio.to_thread(install)
 
+    # ---------------- Steam Input layout of the shortcut
+    async def controller_layout(self):
+        """Install DeckScreen's layout templates and say which one the shortcut should use."""
+        s = _load()
+        mode = s.get("layout", "auto")
+        if mode == "steam" or s.get("motion") == "direct":     # direct = Steam Input off
+            return {"ok": True, "url": "", "kind": ""}
+        try:
+            written = await asyncio.to_thread(layouts.install, decky.DECKY_USER_HOME)
+        except OSError as e:
+            return {"ok": False, "error": f"não consegui instalar o layout: {e}"}
+        if not written:
+            return {"ok": False, "error": "pasta da Steam não encontrada"}
+        kind = mode
+        if mode == "auto":
+            res = await self._authed("GET", "/api/status", timeout=3) if _active(s) else {}
+            profile = (((res or {}).get("data") or {}).get("settings") or {}).get("profile", "desktop")
+            kind = layouts.kind_for_profile(profile)
+        return {"ok": True, "url": layouts.url(kind), "kind": kind}
+
     # ---------------- motion (DSU server)
     dsu_server = None
 
@@ -547,6 +575,10 @@ class Plugin:
     async def _main(self):
         s = _load()
         self._apply_motion(s)
+        try:
+            await asyncio.to_thread(layouts.install, decky.DECKY_USER_HOME)
+        except OSError as e:
+            decky.logger.error(f"layouts: {e}")
         decky.logger.info("DeckScreen loaded")
 
     async def _unload(self):

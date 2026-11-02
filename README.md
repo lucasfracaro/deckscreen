@@ -115,6 +115,7 @@ Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam. Dep
 | **Latência** | *Baixa latência* (sem V-Sync), *Equilibrado* ou *Qualidade* |
 | **Medidor de atraso** | sobreposição do Moonlight com os tempos de rede e decodificação |
 | **Toque = clique direto / Som no PC** | como a tela de toque e o áudio se comportam |
+| **Controles** | Layout da Steam para o atalho DeckScreen. *Automático*: perfil *Área de trabalho* no PC → **trackpad direito = mouse (clique = botão esquerdo), trackpad esquerdo = rolagem, R2 = clique esquerdo, L2 = clique direito**; perfis de jogo → controle completo com gatilhos analógicos e trackpad direito como mouse. Botões e analógicos sempre chegam como controle. Se você editar o layout na Steam, o DeckScreen não mexe mais nele |
 | **Giroscópio** | *Para emuladores* (padrão): o Deck vira uma fonte de movimento DSU/cemuhook na porta UDP 26760, e o Steam Input continua ligado (trackpad como mouse, layouts). *Direto pelo Moonlight*: desliga o Steam Input no atalho; os trackpads deixam de ser mouse |
 | **Codec / Resolução / FPS / Bitrate** | HEVC por padrão; 90 FPS no Deck OLED |
 | **Ligar o PC** | Wake-on-LAN: funciona com o PC suspenso e no cabo (ative também na BIOS) |
@@ -162,6 +163,9 @@ deckscreen-host uninstall   # remove do PC
 | O Sunshine pede usuário e senha no navegador | Foi o instalador que criou esse login: veja com `deckscreen-host sunshine-login` ou troque com `deckscreen-host sunshine-login set` |
 | "Não acessa o Sunshine" | A senha da interface web mudou por fora: rode `deckscreen-host sunshine-login set` |
 | A tela aparece, mas botões e trackpad do Deck não fazem nada | Reinicie o PC se o kernel foi atualizado; depois rode `deckscreen-host fix-input` (carrega `uinput`/`uhid`, instala a regra udev do Sunshine e coloca você no grupo `input`) e saia/entre na sessão |
+| Trackpad não clica / gatilhos não clicam | Atualize o plugin (2.3+) e deixe **Controles** em *Automático* ou *Área de trabalho*: o layout padrão da Steam para atalhos usa os trackpads como analógicos |
+| Segurar Start mostra um aviso vermelho de "modo mouse" | É o modo mouse do próprio Moonlight (analógico move, A/B clicam). Segure Start de novo para sair; com o layout do DeckScreen você não precisa dele |
+| FPS baixo na área de trabalho parada | Normal: o Sunshine só manda quadro quando algo muda na tela. Ligue o medidor de atraso e olhe com um vídeo tocando |
 | Cursor mexe, mas o clique não funciona | `systemctl --user restart app-dev.lizardbyte.app.Sunshine.service` |
 | Monitores do PC desligados ou fora do lugar | `deckscreen-host stop`. O serviço também restaura sozinho se algo cair |
 | "Relógio do Deck e do PC muito diferentes" | Ative a hora automática nos dois |
@@ -199,6 +203,6 @@ cd host && cargo test            # 30 testes do serviço
 
 Releases são publicadas pelo GitHub Actions ao criar uma tag `v*`, com binário estático (musl) que roda em qualquer distro.
 
-Créditos: a técnica de tela virtual com `krfb-virtualmonitor` + captura `kwin` foi inspirada no [Sunveil](https://github.com/ImStillBlue/sunshine-virtual-display), a abertura do Moonlight por atalho da Steam no [MoonDeck](https://github.com/FrogTheFrog/moondeck), e o servidor de giroscópio segue a conversão de eixos do [SteamDeckGyroDSU](https://github.com/kmicki/SteamDeckGyroDSU) (MIT).
+Créditos: a técnica de tela virtual com `krfb-virtualmonitor` + captura `kwin` foi inspirada no [Sunveil](https://github.com/ImStillBlue/sunshine-virtual-display), a abertura do Moonlight por atalho da Steam no [MoonDeck](https://github.com/FrogTheFrog/moondeck), o servidor de giroscópio segue a conversão de eixos do [SteamDeckGyroDSU](https://github.com/kmicki/SteamDeckGyroDSU) (MIT) e a escolha de layout pelo cliente da Steam segue o que o [DeckDrop](https://github.com/Aniforka/deckdrop) mediu (MIT).
 
 Licença: MIT.

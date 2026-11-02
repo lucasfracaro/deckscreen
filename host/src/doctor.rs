@@ -255,6 +255,10 @@ fn virtual_input_checks() -> Vec<Check> {
         None => c(label, "ok", "/dev/uinput e /dev/uhid acessíveis"),
         Some((status, detail)) => c(label, status, detail),
     }];
+    let devs = crate::input::sunshine_devices();
+    if !devs.is_empty() {
+        v.push(c("Controles virtuais agora", "ok", devs.join(", ")));
+    }
     let errs = crate::input::sunshine_log_errors();
     if !errs.is_empty() {
         v.push(c(

@@ -227,8 +227,35 @@ pub fn log_input_errors(log: &str) -> Vec<String> {
     v
 }
 
+/// Names of the virtual devices Sunshine has created right now (only while streaming).
+pub fn sunshine_devices() -> Vec<String> {
+    std::fs::read_to_string("/proc/bus/input/devices")
+        .map(|t| parse_devices(&t))
+        .unwrap_or_default()
+}
+
+pub fn parse_devices(text: &str) -> Vec<String> {
+    let mut v: Vec<String> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("N: Name=\""))
+        .map(|n| n.trim_end_matches('"').to_string())
+        .filter(|n| n.to_ascii_lowercase().contains("sunshine"))
+        .collect();
+    v.dedup();
+    v
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lists_sunshine_devices() {
+        let t = "I: Bus=0003\nN: Name=\"Logitech USB Receiver\"\n\nN: Name=\"Sunshine (libvirtualhid) DualSense\"\nN: Name=\"Sunshine (libvirtualhid) Mouse\"\n";
+        assert_eq!(
+            super::parse_devices(t),
+            vec!["Sunshine (libvirtualhid) DualSense", "Sunshine (libvirtualhid) Mouse"]
+        );
+    }
+
     use super::*;
 
     #[test]

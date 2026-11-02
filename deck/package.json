@@ -1,6 +1,6 @@
 {
   "name": "deckscreen",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Use o Steam Deck como segunda tela e controle do PC (estilo Wii U GamePad)",
   "type": "module",
   "scripts": {

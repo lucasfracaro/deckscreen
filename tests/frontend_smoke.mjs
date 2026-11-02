@@ -52,7 +52,7 @@ globalThis.window = {
 
 // ---------- fake backend (mirrors main.py responses)
 const be = {
-  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", motion: "dsu", polls: 0, online: true,
+  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", motion: "dsu", layout: "auto", polls: 0, online: true,
   hostSettings: { mode: "extend", position: "right", scale: 1, orientation: "landscape", profile: "desktop",
     open_app: true, close_app: false, custom: { rules: [], fullscreen: true, command: "" } },
 };
@@ -60,16 +60,18 @@ const hostList = () => Object.entries(be.hosts).map(([id, h]) => ({ id, ...h }))
 const settings = () => ({
   hosts: hostList(), host: hostList().find((h) => h.id === be.active) || null, active: be.active,
   resolution: "1280x800", fps: be.fps, bitrate: 20000, preset: be.preset, codec: "auto", overlay: false,
-  audio_on_host: false, absolute_touch: true, motion: be.motion, shortcut_app_id: be.shortcut_app_id,
+  audio_on_host: false, absolute_touch: true, motion: be.motion, layout: be.layout, shortcut_app_id: be.shortcut_app_id,
 });
 const backend = {
   get_settings: () => settings(),
   save_settings: (p) => {
     if (p.shortcut_app_id) be.shortcut_app_id = p.shortcut_app_id;
-    for (const k of ["fps", "preset", "motion"]) if (k in p) be[k] = p[k];
+    for (const k of ["fps", "preset", "motion", "layout"]) if (k in p) be[k] = p[k];
     return settings();
   },
   moonlight_status: () => ({ installed: true }),
+  controller_layout: () => be.motion === "direct" || be.layout === "steam" ? { ok: true, url: "" }
+    : { ok: true, url: `template://controller_neptune_deckscreen_${be.layout === "auto" ? (be.hostSettings.profile === "desktop" ? "desktop" : "game") : be.layout}.vdf` },
   motion_status: () => ({ running: true, port: 26760, mode: be.motion, deck_ip: "192.168.0.20", clients: ["192.168.0.10"], imu_active: false }),
   discover: () => [{ ip: "192.168.0.10", port: 47555, name: "cachyos-pc", capability: "virtual" }],
   add_host: (ip, port) => { be.hosts["cachyos-pc"] = { ip, port, name: "cachyos-pc", paired: false, mac: "", wired: null, capability: "virtual" }; be.active = "cachyos-pc"; return { ok: true, id: "cachyos-pc" }; },
@@ -125,7 +127,15 @@ globalThis.SteamClient = {
     RunGame: (gid) => log.push(`run:${gid}`),
     TerminateApp: (gid) => log.push(`terminate:${gid}`),
   },
+  Input: {
+    GetConfigForAppAndController: async (id, idx) => ({ URL: layoutOf.get(`${id}/${idx}`) || "template://controller_neptune_gamepad_joystick.vdf" }),
+    SetSelectedConfigForApp: async (id, idx, url, preview, how) => {
+      if (preview === false && how === 1) { layoutOf.set(`${id}/${idx}`, url); log.push(`layout:${idx}:${url}`); }
+    },
+  },
 };
+const layoutOf = new Map();
+window.ControllerStore = { m_controllerList: [{ strName: "Steam Deck Controller", nControllerIndex: 15, eControllerType: 4 }] };
 
 // ---------- load plugin
 const mod = await import(pathToFileURL(path.resolve("dist/index.js")).href);
@@ -183,6 +193,14 @@ await find(tree, "DropdownItem", "Modo").props.onChange({ data: "mirror" });
 assert.equal(be.hostSettings.mode, "mirror");
 tree = await render();
 assert.ok(!find(tree, "DropdownItem", "Posição"), "position hidden when mirroring");
+assert.ok(log.includes("layout:15:template://controller_neptune_deckscreen_desktop.vdf"), "desktop layout selected for the shortcut on the Deck's controller index");
+await find(tree, "DropdownItem", "Perfil").props.onChange({ data: "custom" });
+tree = await render();
+assert.ok(log.includes("layout:15:template://controller_neptune_deckscreen_game.vdf"), "game layout after switching away from the desktop profile");
+layoutOf.set("3000000001/15", "autosave:///home/deck/x/controller_neptune.vdf");
+const before = log.length;
+await find(tree, "DropdownItem", "Perfil").props.onChange({ data: "desktop" });
+assert.ok(!log.slice(before).some((l) => l.startsWith("layout:")), "a layout the user edited is never replaced");
 await find(tree, "DropdownItem", "Perfil").props.onChange({ data: "custom" });
 tree = await render();
 find(tree, "TextField", "Janelas").props.onChange({ target: { value: "Secondary, Top Screen" } });

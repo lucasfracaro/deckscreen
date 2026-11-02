@@ -33,7 +33,7 @@ interface Found { ip: string; port: number; name: string; version?: string; capa
 interface DeckSettings {
   hosts: HostInfo[]; host: HostInfo | null; active: string; resolution: string; fps: number; bitrate: number;
   preset: string; codec: string; overlay: boolean; audio_on_host: boolean; absolute_touch: boolean;
-  motion: "off" | "dsu" | "direct"; shortcut_app_id: number;
+  motion: "off" | "dsu" | "direct"; layout: "auto" | "desktop" | "game" | "steam"; shortcut_app_id: number;
 }
 interface MotionStatus {
   running: boolean; port: number; mode: string; deck_ip: string; clients?: string[];
@@ -102,6 +102,35 @@ function applyMotion(appId: number, motion: string) {
   try { SteamClient.Apps.SetThirdPartyControllerConfiguration(appId, motion === "direct" ? 0 : 1); } catch { /* older client */ }
 }
 
+/** Index Steam gives the Deck's built-in controls (15 on a Deck, not 0), as its own layout picker uses. */
+function deckControllerIndex(): number | null {
+  const store = (window as any).ControllerStore || {};
+  const list: any[] = store.m_controllerList || [];
+  const deck = list.find((c) => c.eControllerType === 4) || list[0];
+  const idx = deck ? deck.nControllerIndex : store.m_nLastValidActiveControllerIndex;
+  return typeof idx === "number" ? idx : null;
+}
+
+/**
+ * Select DeckScreen's layout (desktop or game) for the shortcut, the way Steam's picker does
+ * (5 arguments; with 4 Steam silently selects nothing). A layout the user edited in Steam
+ * (autosave/workshop) is never replaced.
+ */
+async function applyLayout(appId: number): Promise<void> {
+  const r = await call<{ ok: boolean; url?: string; error?: string }>("controller_layout");
+  if (!r.ok || !r.url) return;
+  const input = SteamClient.Input;
+  const idx = deckControllerIndex();
+  if (!input || idx === null) return;
+  try {
+    const cur = await input.GetConfigForAppAndController(appId, idx);
+    const curUrl = String(cur?.URL || "");
+    if (curUrl === r.url) return;
+    if (curUrl && !curUrl.startsWith("template://")) return;   // the user's own layout
+    await input.SetSelectedConfigForApp(appId, idx, r.url, false, 1);
+  } catch { /* older client */ }
+}
+
 async function launchShortcut(appId: number, launchOptions: string): Promise<boolean> {
   SteamClient.Apps.SetAppLaunchOptions(appId, launchOptions);
   await waitDetails(appId, (d) => d.strLaunchOptions === launchOptions);
@@ -121,7 +150,10 @@ async function prepareShortcut(): Promise<number | null> {
   const id = await ensureShortcut(s.shortcut_app_id);
   if (id && id !== s.shortcut_app_id) await call("save_settings", { shortcut_app_id: id });
   if (!id) toast("DeckScreen", "Não consegui criar o atalho na Steam. Reinicie a Steam e tente de novo.");
-  else applyMotion(id, s.motion);
+  else {
+    applyMotion(id, s.motion);
+    await applyLayout(id);
+  }
   return id;
 }
 
@@ -220,6 +252,7 @@ const PROFILE_OPTS = opts([["desktop", "Área de trabalho"], ["cemu", "Wii U (Ce
 const PRESET_OPTS = opts([["low_latency", "Baixa latência"], ["balanced", "Equilibrado"], ["quality", "Qualidade (mais suave)"]]);
 const CODEC_OPTS = opts([["auto", "Automático"], ["HEVC", "HEVC (recomendado)"], ["H.264", "H.264"]]);
 const RES_OPTS = opts([["1280x800", "1280×800 (nativa do Deck)"], ["1920x1080", "1920×1080"], ["1920x1200", "1920×1200"], ["2560x1600", "2560×1600"]]);
+const LAYOUT_OPTS = opts([["auto", "Automático (pelo perfil do PC)"], ["desktop", "Área de trabalho (R2/L2 clicam)"], ["game", "Jogo (gatilhos analógicos)"], ["steam", "Não mexer (escolho na Steam)"]]);
 const MOTION_OPTS = opts([["off", "Desligado"], ["dsu", "Para emuladores (mantém o Steam Input)"], ["direct", "Direto pelo Moonlight (desliga o Steam Input)"]]);
 const FPS_OPTS = opts([[30, "30"], [40, "40"], [60, "60"], [90, "90 (Deck OLED)"]]);
 
@@ -291,6 +324,7 @@ function Content() {
   const updateDeck = async (patch: any) => {
     const ns = await call<DeckSettings>("save_settings", patch);
     setS(ns);
+    if (("layout" in patch || "motion" in patch) && ns.shortcut_app_id) applyLayout(ns.shortcut_app_id);
     if ("motion" in patch) {
       if (ns.shortcut_app_id) applyMotion(ns.shortcut_app_id, ns.motion);
       setMotion(ns.motion === "off" ? null : await call<MotionStatus>("motion_status"));
@@ -372,6 +406,7 @@ function Content() {
   const updateHost = async (patch: any) => {
     const r = await call<Result<HostSettings>>("host_update_settings", patch);
     if (!r.ok) toast("DeckScreen", r.error || "Erro ao salvar no PC");
+    if ("profile" in patch && s && s.shortcut_app_id && s.layout === "auto") await applyLayout(s.shortcut_app_id);
     await refresh();
   };
 
@@ -460,6 +495,7 @@ function Content() {
       h(Toggle, { label: "Mostrar medidor de atraso", desc: "Sobreposição do Moonlight com o tempo de rede e decodificação.", checked: s.overlay, onChange: (v) => updateDeck({ overlay: v }) }),
       h(Toggle, { label: "Toque = clique direto", desc: "Tocar na tela clica onde você tocou.", checked: s.absolute_touch, onChange: (v) => updateDeck({ absolute_touch: v }) }),
       h(Toggle, { label: "Som no PC", desc: "Desligado: o som sai no Deck.", checked: s.audio_on_host, onChange: (v) => updateDeck({ audio_on_host: v }) }),
+      h(Drop, { label: "Controles", options: LAYOUT_OPTS, value: s.layout, onChange: (v) => updateDeck({ layout: v }) }),
       h(Drop, { label: "Giroscópio", options: MOTION_OPTS, value: s.motion, onChange: (v) => updateDeck({ motion: v }) }),
       motion && h(Row, null, h(Note, null, describeMotion(motion))),
       h(Toggle, { label: "Opções de vídeo", checked: showVideo, onChange: setShowVideo }),
