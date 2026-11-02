@@ -327,6 +327,11 @@ fn install_kde_extras(bin: &str) {
 }
 
 fn setup_firewall(yes: bool) {
+    let mark = || {
+        let mut cfg = Config::load_default();
+        cfg.data.set("firewall_configured", true);
+        cfg.save();
+    };
     let active = |svc: &str| {
         util::run("systemctl", &["is-active", "--quiet", svc])
             .map(|o| o.status.success())
@@ -343,6 +348,7 @@ fn setup_firewall(yes: bool) {
             for p in UDP_PORTS {
                 util::run_interactive("sudo", &["ufw", "allow", &format!("{p}/udp")]);
             }
+            mark();
             ok("portas liberadas no ufw");
         }
     } else if util::which("firewall-cmd").is_some() && active("firewalld") {
@@ -363,6 +369,7 @@ fn setup_firewall(yes: bool) {
                 );
             }
             util::run_interactive("sudo", &["firewall-cmd", "-q", "--reload"]);
+            mark();
             ok("portas liberadas no firewalld");
         }
     } else {
@@ -482,6 +489,16 @@ pub fn install(o: &Opts) -> i32 {
     if desktop == Desktop::Gnome && display::is_wayland() {
         say("GNOME");
         report_gnome_support(desktop);
+    }
+
+    if !std::path::Path::new("/dev/uinput").exists() {
+        let kernel = util::run_stdout("uname", &["-r"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if !std::path::Path::new(&format!("/lib/modules/{kernel}")).exists() {
+            warn("O kernel foi atualizado e o PC ainda não reiniciou: o controle virtual do Sunshine (uinput)");
+            warn("só funciona depois de reiniciar. Pode continuar a instalação e reiniciar no final.");
+        }
     }
 
     say("Instalando o DeckScreen");

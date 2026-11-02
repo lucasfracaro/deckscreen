@@ -125,6 +125,7 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         )),
         None => v.push(c("Serviço do Sunshine", "warn", "serviço de usuário não encontrado")),
     }
+    v.push(virtual_input_check());
     let cfg = Config::load_default();
     let api = sunshine::api_from_config(&cfg);
     v.push(if cfg.sunshine().1.is_empty() {
@@ -227,20 +228,48 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         }
         None => v.push(c("Rede do PC", "fail", "sem rota de rede")),
     }
-    if util::run("systemctl", &["is-active", "--quiet", "ufw"])
+    let fw_active = util::run("systemctl", &["is-active", "--quiet", "ufw"])
         .map(|o| o.status.success())
         .unwrap_or(false)
         || util::run("systemctl", &["is-active", "--quiet", "firewalld"])
             .map(|o| o.status.success())
-            .unwrap_or(false)
-    {
-        v.push(c(
-            "Firewall",
-            "warn",
-            "ativo: confira as portas TCP 47984,47989,48010,47555 e UDP 47998-48000,47556",
-        ));
+            .unwrap_or(false);
+    if fw_active {
+        v.push(if cfg.data.bool_at("firewall_configured", false) {
+            c("Firewall", "ok", "ativo, com as portas liberadas pelo instalador")
+        } else {
+            c(
+                "Firewall",
+                "warn",
+                "ativo: libere TCP 47984,47989,48010,47555 e UDP 47998-48000,47556 (o install faz isso)",
+            )
+        });
     }
     v
+}
+
+/// Sunshine creates the virtual controller/mouse through /dev/uinput (and uhid).
+/// After a kernel update without reboot the running kernel's modules are gone.
+fn virtual_input_check() -> Check {
+    let label = "Controle virtual (uinput)";
+    if std::path::Path::new("/dev/uinput").exists() {
+        return c(label, "ok", "/dev/uinput disponível");
+    }
+    let kernel = util::run_stdout("uname", &["-r"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if !kernel.is_empty() && !std::path::Path::new(&format!("/lib/modules/{kernel}")).exists() {
+        return c(
+            label,
+            "fail",
+            format!("o kernel foi atualizado e o PC não reiniciou ({kernel}): reinicie o PC"),
+        );
+    }
+    c(
+        label,
+        "fail",
+        "carregue o módulo: sudo modprobe uinput (o Sunshine instala o carregamento automático)",
+    )
 }
 
 pub fn checks_json(desktop: Desktop) -> Json {

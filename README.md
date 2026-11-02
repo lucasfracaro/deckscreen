@@ -61,18 +61,25 @@ O instalador se copia para `~/.local/bin`, então o AppImage pode ser apagado de
 
 ### CachyOS / Arch
 
-Use o AppImage acima, ou:
+Use o AppImage acima ou **uma** das opções abaixo. Rode só uma delas; não cole os três blocos juntos.
 
+**A) Pelo código-fonte** (compila com o `cargo`, leva menos de um minuto):
 ```bash
-# pacote de release (binário pronto)
-tar xzf deckscreen-host-*-x86_64.tar.gz && cd deckscreen-host-* && ./install.sh
-
-# ou pelo código-fonte (compila com cargo)
 git clone https://github.com/lucasfracaro/deckscreen && cd deckscreen && ./install.sh
-
-# ou como pacote do pacman
-cd packaging/arch && makepkg -si && deckscreen-host install
 ```
+
+**B) Pacote de release com o binário pronto.** Primeiro baixe `deckscreen-host-<versão>-x86_64.tar.gz` em [Releases](../../releases). Depois, na pasta do download:
+```bash
+tar xzf deckscreen-host-*-x86_64.tar.gz && cd deckscreen-host-*/ && ./install.sh
+```
+
+**C) Como pacote do pacman.** Funciona a partir da versão publicada em Releases, porque o PKGBUILD baixa a tag `v<versão>`:
+```bash
+git clone https://github.com/lucasfracaro/deckscreen && cd deckscreen/packaging/arch && makepkg -si
+deckscreen-host install
+```
+
+> **Atualizou o kernel e ainda não reiniciou?** Reinicie antes de usar. O controle virtual do Sunshine precisa dos módulos `uinput`/`uhid` do kernel em execução, e o `deckscreen-host doctor` avisa quando eles faltam.
 
 ## Instalação no Steam Deck
 
