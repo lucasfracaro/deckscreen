@@ -1,6 +1,6 @@
 # Maintainer: Lucas Fracaro <lucasgfracaro@gmail.com>
 pkgname=deckscreen-host
-pkgver=2.0.0
+pkgver=2.0.1
 pkgrel=1
 pkgdesc="Steam Deck como segunda tela e controle do PC, estilo Wii U GamePad (lado do PC)"
 arch=('x86_64' 'aarch64')

@@ -13,9 +13,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 APPDIR="$WORK/DeckScreen.AppDir"
 install -Dm755 "$BIN" "$APPDIR/usr/bin/deckscreen-host"
-install -Dm644 "$ROOT/host/assets/deckscreen.svg" "$APPDIR/deckscreen.svg"
+install -Dm644 "$ROOT/host/assets/deckscreen.png" "$APPDIR/deckscreen.png"
+install -Dm644 "$ROOT/host/assets/deckscreen.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/deckscreen.png"
 install -Dm644 "$ROOT/host/assets/deckscreen.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/deckscreen.svg"
-ln -s deckscreen.svg "$APPDIR/.DirIcon"
+# .DirIcon must be a PNG (an SVG is rejected by appimagetool)
+cp "$ROOT/host/assets/deckscreen.png" "$APPDIR/.DirIcon"
 cat > "$APPDIR/deckscreen.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
