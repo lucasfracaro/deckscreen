@@ -147,6 +147,8 @@ deckscreen-host uninstall   # remove do PC
 
 ## Desenvolvimento
 
+O funcionamento interno (arquitetura, protocolo, cada módulo, testes e release) está explicado em detalhes no **[README_DEV.md](README_DEV.md)**.
+
 ```
 host/        serviço do PC em Rust, sem dependências externas (JSON, HTTP, SHA-256/HMAC próprios e testados)
   assets/    widget do Plasma, unidade do systemd, ícone
