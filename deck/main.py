@@ -23,7 +23,12 @@ import urllib.error
 import urllib.request
 import uuid
 
+import sys
+
 import decky
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "py_modules"))
+import dsu  # noqa: E402
 
 API_PORT = 47555
 DISCOVERY_PORT = 47556
@@ -37,6 +42,9 @@ SETTINGS_FILE = os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 RESOLUTIONS = ("1280x800", "1920x1080", "1920x1200", "2560x1600")
 PRESETS = ("low_latency", "balanced", "quality")
 CODECS = ("auto", "H.264", "HEVC")
+# Motion: off; "dsu" = serve the gyro to emulators on the PC (Steam Input stays on);
+# "direct" = Steam Input off so Moonlight forwards the gyro (loses trackpad-as-mouse).
+MOTION_MODES = ("off", "dsu", "direct")
 
 DEFAULTS = {
     "hosts": {},             # id -> {ip, port, name, key, mac, wired, capability}
@@ -50,7 +58,7 @@ DEFAULTS = {
     "overlay": False,        # Moonlight performance overlay (shows the latency)
     "audio_on_host": False,
     "absolute_touch": True,  # touchscreen = direct clicks on the Deck screen
-    "gyro": False,           # turn Steam Input off for the shortcut so motion reaches the PC
+    "motion": "dsu",         # see MOTION_MODES
     "shortcut_app_id": 0,
 }
 
@@ -72,6 +80,12 @@ def _load() -> dict:
         s["active"] = h.get("name") or h["ip"]
         s.pop("token", None)
         changed = True
+    # v2.1 -> v2.2: boolean gyro (Steam Input off) -> motion mode
+    if "gyro" in s:
+        s["motion"] = "direct" if s.pop("gyro") else "dsu"
+        changed = True
+    if s.get("motion") not in MOTION_MODES:
+        s["motion"] = "dsu"
     if not s.get("device_id"):
         s["device_id"] = uuid.uuid4().hex
         changed = True
@@ -233,6 +247,16 @@ def deck_network() -> dict:
     return info
 
 
+def local_ip(target: str = "") -> str:
+    """The Deck's address on the route to the PC (what an emulator should connect to)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as so:
+            so.connect((target or "192.0.2.1", 9))   # no packet is sent for UDP connect
+            return so.getsockname()[0]
+    except OSError:
+        return ""
+
+
 def tcp_rtt(ip: str, port: int, count: int = 20) -> dict:
     """Round-trip time using TCP handshakes (needs no root, unlike ICMP ping)."""
     times, lost = [], 0
@@ -280,7 +304,7 @@ class Plugin:
                   "paired": bool(v.get("key")), "mac": v.get("mac") or "", "wired": v.get("wired"),
                   "capability": v.get("capability", "")} for k, v in s["hosts"].items()]
         out = {k: s[k] for k in ("resolution", "fps", "bitrate", "preset", "codec", "overlay", "audio_on_host",
-                                 "absolute_touch", "gyro", "shortcut_app_id", "active")}
+                                 "absolute_touch", "motion", "shortcut_app_id", "active")}
         out["hosts"] = hosts
         out["host"] = next((h for h in hosts if h["id"] == s["active"]), None)
         return out
@@ -297,12 +321,15 @@ class Plugin:
             s["preset"] = patch["preset"]
         if patch.get("codec") in CODECS:
             s["codec"] = patch["codec"]
-        for k in ("audio_on_host", "absolute_touch", "overlay", "gyro"):
+        if patch.get("motion") in MOTION_MODES:
+            s["motion"] = patch["motion"]
+        for k in ("audio_on_host", "absolute_touch", "overlay"):
             if k in patch:
                 s[k] = bool(patch[k])
         if "shortcut_app_id" in patch:
             s["shortcut_app_id"] = int(patch["shortcut_app_id"] or 0)
         _save(s)
+        self._apply_motion(s)
         return await self.get_settings()
 
     # ---------------- PCs
@@ -491,13 +518,41 @@ class Plugin:
             return {"ok": True}
         return await asyncio.to_thread(install)
 
+    # ---------------- motion (DSU server)
+    dsu_server = None
+
+    def _apply_motion(self, s: dict) -> None:
+        want = s.get("motion") == "dsu"
+        if want and not self.dsu_server:
+            try:
+                srv = dsu.Server(log=decky.logger.info)
+                srv.start()
+                Plugin.dsu_server = srv
+                decky.logger.info(f"DSU: servidor de movimento na porta {dsu.PORT}")
+            except OSError as e:
+                decky.logger.error(f"DSU: não consegui abrir a porta {dsu.PORT}: {e}")
+        elif not want and self.dsu_server:
+            self.dsu_server.stop()
+            Plugin.dsu_server = None
+
+    async def motion_status(self):
+        s = _load()
+        h = _active(s)
+        st = self.dsu_server.status() if self.dsu_server else {"running": False, "port": dsu.PORT}
+        st["mode"] = s.get("motion")
+        st["deck_ip"] = await asyncio.to_thread(local_ip, h["ip"] if h else "")
+        return st
+
     # ---------------- lifecycle
     async def _main(self):
-        _load()
+        s = _load()
+        self._apply_motion(s)
         decky.logger.info("DeckScreen loaded")
 
     async def _unload(self):
-        pass
+        if self.dsu_server:
+            self.dsu_server.stop()
+            Plugin.dsu_server = None
 
     async def _uninstall(self):
         pass

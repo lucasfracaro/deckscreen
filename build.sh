@@ -22,6 +22,7 @@ echo "==> Pacotes"
 rm -rf release build && mkdir -p release build/DeckScreen/dist "build/deckscreen-host-$VERSION"
 cp deck/plugin.json deck/package.json deck/main.py LICENSE build/DeckScreen/
 cp deck/dist/index.js build/DeckScreen/dist/
+mkdir -p build/DeckScreen/py_modules && cp deck/py_modules/dsu.py build/DeckScreen/py_modules/
 (cd build && python3 -m zipfile -c ../release/DeckScreen-decky.zip DeckScreen)
 
 H="build/deckscreen-host-$VERSION"

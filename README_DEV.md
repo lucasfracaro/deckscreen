@@ -222,6 +222,7 @@ O MAC do PC chega ao Deck pelo campo `network.mac` de `/api/status`. Ele é calc
 | TCP **47555** (`0.0.0.0`) | daemon | API para o Deck (`/api/*`) |
 | UDP **47556** (`0.0.0.0`) | daemon | busca automática |
 | TCP **47557** (`127.0.0.1`) | daemon | controle local: hooks e CLI (`/local/*`), widget (`/ui/*`) |
+| UDP **26760** (`0.0.0.0`, **no Deck**) | plugin (`dsu.py`) | giroscópio para emuladores (DSU/cemuhook), só com *Giroscópio → Para emuladores* |
 | TCP 47984, 47989, 48010 · UDP 47998–48000 | Sunshine | GameStream |
 | TCP 47990 (`localhost`) | Sunshine | interface/API web (HTTPS) |
 
@@ -499,15 +500,17 @@ Cada `async def` da classe `Plugin` vira uma chamada `call("nome", …)` na inte
 
 | Função | O que faz |
 |---|---|
-| `get_settings` / `save_settings` | Lê e valida o `settings.json`: resolução, FPS, bitrate, preset, codec, medidor, som, toque, giroscópio, id do atalho |
+| `get_settings` / `save_settings` | Lê e valida o `settings.json`: resolução, FPS, bitrate, preset, codec, medidor, som, toque, modo do giroscópio (`motion`: `off`/`dsu`/`direct`; o antigo `gyro` booleano é migrado), id do atalho. Mudar `motion` liga ou desliga o servidor DSU |
 | `discover` / `add_host` / `select_host` / `forget_host` | Lista de PCs. `forget_host` também chama `/api/unpair` |
 | `pair_start` / `pair_status` | §3.2. `pair_start` já devolve as opções de lançamento do Moonlight para o `pair` |
 | `host_status` / `host_update_settings` / `host_stop` / `host_doctor` | Rotas assinadas. `host_status` guarda MAC, cabo/Wi-Fi e capacidade do PC. Um 401 apaga a chave, exceto quando o erro é de relógio |
 | `wake_host` | §3.4 |
 | `test_connection` | `tcp_rtt` (20 *handshakes* TCP com timeout de 1 s: mede o RTT sem precisar de root, ao contrário do ICMP), `deck_network` (via `nmcli`: cabo no dock ou Wi-Fi com faixa, sinal e taxa) e `verdict` (dicas) |
 | `stream_launch_options` | Monta a linha do Moonlight (§6.4) |
+| `motion_status` | Estado do servidor DSU: porta, IP do Deck na rota até o PC (`local_ip`), clientes, erro e se a Steam está mandando o IMU |
 | `moonlight_status` / `install_moonlight` | `flatpak info`; `flatpak remote-add --user flathub` + `install --user` |
 
+- **`py_modules/dsu.py` — giroscópio sem desligar o Steam Input.** Lê o controle do Deck direto do hidraw (`28de:1205`, interface 2, relatório de 64 bytes do tipo `0x09`; layout `SteamDeckStatePacket_t` do SDL) **só para leitura**, ao lado da Steam, e serve o protocolo DSU/cemuhook (versão 1001, CRC32, slot 0, pacote de dados de 100 bytes) em UDP 26760. Conversão: aceleração ÷ 16384 → g; giroscópio ÷ 16 → °/s com zona morta de 8; `pitch = RtL`, `yaw = −FtB`, `roll = TtB` (como o SteamDeckGyroDSU). Sem cliente, nem abre o dispositivo; um cliente que não renova o pedido em 5 s sai da lista. A Steam desliga o IMU quando o layout ativo não usa o giroscópio: `imu_active` detecta isso e a interface mostra a dica.
 - `_env()` remove o `LD_LIBRARY_PATH` que o Python embutido do Decky define. Sem isso, binários do sistema como `flatpak` e `nmcli` podem quebrar.
 - **Limiares do `verdict`:** Wi-Fi 2,4 GHz; sinal abaixo de 50%; PC no Wi-Fi; perdas; RTT médio acima de 8 ms ou variação acima de 4 ms.
 
@@ -522,7 +525,7 @@ Cada `async def` da classe `Plugin` vira uma chamada `call("nome", …)` na inte
 - **Atalho da Steam:**
   - `ensureShortcut()` reaproveita o id salvo ou procura um atalho chamado "DeckScreen" em `appStore.m_mapApps`; se não houver, cria com `SteamClient.Apps.AddShortcut("DeckScreen", "/usr/bin/flatpak", "", "")` + `SetShortcutName`. Esse padrão de chamadas veio do MoonDeck.
   - `launchShortcut()` chama `SetAppLaunchOptions`, espera `RegisterForAppDetails` confirmar a mudança e então chama `RunGame(gameid, "", -1, 100)`.
-  - `applyGyro()` chama `SetThirdPartyControllerConfiguration(appId, 0 = desligado | 1 = padrão)`.
+  - `applyMotion()` chama `SetThirdPartyControllerConfiguration(appId, 0 = desligado | 1 = padrão)`: só o modo `direct` desliga o Steam Input.
   - `terminateShortcut()` chama `TerminateApp(gameid, false)`.
 - `connect(online)`: com o PC desligado e o MAC conhecido, acorda o PC antes de conectar; depois abre o Moonlight e fecha o menu (`Navigation.CloseSideMenus()`).
 
@@ -617,7 +620,7 @@ flatpak run com.moonlight_stream.Moonlight stream <ip> DeckScreen \
   "device_id": "32 caracteres hex",
   "resolution": "1280x800", "fps": 60, "bitrate": 20000,
   "preset": "low_latency", "codec": "auto", "overlay": false,
-  "audio_on_host": false, "absolute_touch": true, "gyro": false,
+  "audio_on_host": false, "absolute_touch": true, "motion": "dsu",
   "shortcut_app_id": 0
 }
 ```
@@ -632,8 +635,9 @@ O formato v1 (`"host"` + `"token"`) é migrado automaticamente por `_load()`.
 |---|---|---|
 | `host/src/*` (`#[cfg(test)]`) — **30 testes** | JSON (ida e volta, erros, ordem); SHA-256/HMAC (vetores oficiais); servidor HTTP; geometria do layout; backend KDE com `FakeKs` (estender, só no Deck, espelhar, rotação, script, falha limpa); layout do GNOME e backend com `FakeMutter` (espera o monitor, posiciona, restaura); merge de `sunshine.conf`/`apps.json`; PIN nas APIs nova e antiga e com senha errada; pareamento; **API completa** (assinatura, replay, corpo adulterado, relógio, hooks, widget, unpair); busca UDP; configurações e migração; nomes de pacotes | `cd host && cargo test` |
 | `tests/test_gnome_helper.py` | ajudante do GNOME com um PyGObject falso: leitura do `GetCurrentState` e montagem do `ApplyMonitorsConfig` | `python3 -m unittest discover -s tests` |
+| `tests/test_dsu.py` | servidor DSU: leitura do relatório do Deck, conversão de eixos e zona morta, pacotes (tamanho, CRC), pedido com CRC errado, escolha do hidraw da interface 2 num sysfs falso, e ponta a ponta (versão, info, assinatura e dados vindos de um FIFO no lugar do hidraw) | `python3 -m unittest discover -s tests` |
 | `tests/test_deck_backend.py` | assinatura igual à especificação, pacote mágico, parser do `nmcli`, dicas do teste de rede, migração v1, linha do Moonlight | `python3 -m unittest discover -s tests` |
-| `tests/frontend_smoke.mjs` | interface inteira com React, `@decky/ui` e `SteamClient` **falsos**: buscar → adicionar → parear (PIN, atalho, fechar o Moonlight) → conectar → modo/perfil/regras → giroscópio (Steam Input) → preset → teste de rede → diagnóstico → encerrar → PC desligado (Wake-on-LAN) | `cd deck && tsc -p . && node ../tests/frontend_smoke.mjs` |
+| `tests/frontend_smoke.mjs` | interface inteira com React, `@decky/ui` e `SteamClient` **falsos**: buscar → adicionar → parear (PIN, atalho, fechar o Moonlight) → conectar → modo/perfil/regras → giroscópio (DSU mantém o Steam Input; *direto* desliga) → preset → teste de rede → diagnóstico → encerrar → PC desligado (Wake-on-LAN) | `cd deck && tsc -p . && node ../tests/frontend_smoke.mjs` |
 | `tests/integration.py` | **binário real + `main.py` real**: sobe o daemon com `HOME`/XDG temporários e passa por adicionar, parear (aprovando pelo CLI), status, configurações, doctor, teste de rede, encerrar e esquecer | `python3 tests/integration.py host/target/release/deckscreen-host` |
 
 O que **não** é coberto automaticamente, porque exige hardware ou sessão gráfica real: KWin/krfb/kscreen de verdade, Hyprland, Sunshine e Moonlight reais, a Steam no Deck, o widget QML.
@@ -730,7 +734,7 @@ gdbus call --session --dest org.kde.KWin --object-path /Scripting \
 - **`curl` para o Sunshine**, pelo mesmo motivo. Vem instalado em praticamente todas as distros, e o instalador garante isso.
 - **`krfb-virtualmonitor`** é o único jeito estável de criar um output virtual no KWin sem plugue fantasma. O VNC que ele abre recebe senha aleatória e não é exposto pelo firewall.
 - **Tela vertical** depende de como a captura do KWin entrega uma saída rotacionada: pode chegar com tarja preta ou girada. Por isso está marcada como experimental.
-- **Giroscópio:** com o Steam Input desligado, o Moonlight (SDL) precisa enxergar o controle do Deck diretamente; isso varia com a versão do SteamOS e do Flatpak.
+- **Giroscópio:** o modo *Para emuladores* (DSU) depende de a Steam manter o IMU ligado, o que exige alguma ação de giroscópio no layout. O modo *Direto* depende de o Moonlight (SDL) enxergar o controle do Deck com o Steam Input desligado, o que varia com a versão do SteamOS e do Flatpak. Jogos nativos do PC (fora de emuladores) só recebem movimento pelo modo *Direto*, ou pelo giroscópio como mouse/joystick no layout da Steam.
 - **Hyprland:** a sintaxe de regras de janela mudou entre versões. O código tenta `windowrulev2` e depois `windowrule`.
 - **GNOME** depende da opção `portal_virtual_display` no Sunshine (proposta ao projeto oficial, §5.9b). Até ela existir numa versão oficial, o GNOME fica no modo espelho. O GNOME também não permite mover janelas por programa, então o modo Wii U não é automático nele.
 - **Sunshine em Flatpak** não funciona com a captura `kwin` sem desativar uma proteção do KWin. O instalador prefere o pacote ou o AppImage.

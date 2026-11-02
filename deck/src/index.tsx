@@ -33,7 +33,11 @@ interface Found { ip: string; port: number; name: string; version?: string; capa
 interface DeckSettings {
   hosts: HostInfo[]; host: HostInfo | null; active: string; resolution: string; fps: number; bitrate: number;
   preset: string; codec: string; overlay: boolean; audio_on_host: boolean; absolute_touch: boolean;
-  gyro: boolean; shortcut_app_id: number;
+  motion: "off" | "dsu" | "direct"; shortcut_app_id: number;
+}
+interface MotionStatus {
+  running: boolean; port: number; mode: string; deck_ip: string; clients?: string[];
+  imu_active?: boolean; error?: string;
 }
 interface HostSettings {
   mode: string; position: string; scale: number; orientation: string; profile: string;
@@ -93,9 +97,9 @@ async function ensureShortcut(saved: number): Promise<number | null> {
   return id;
 }
 
-/** Steam Input off (gyro reaches the PC through Moonlight) or the default. */
-function applyGyro(appId: number, gyro: boolean) {
-  try { SteamClient.Apps.SetThirdPartyControllerConfiguration(appId, gyro ? 0 : 1); } catch { /* older client */ }
+/** "direct" turns Steam Input off (Moonlight forwards the gyro); everything else keeps Steam's default. */
+function applyMotion(appId: number, motion: string) {
+  try { SteamClient.Apps.SetThirdPartyControllerConfiguration(appId, motion === "direct" ? 0 : 1); } catch { /* older client */ }
 }
 
 async function launchShortcut(appId: number, launchOptions: string): Promise<boolean> {
@@ -117,7 +121,7 @@ async function prepareShortcut(): Promise<number | null> {
   const id = await ensureShortcut(s.shortcut_app_id);
   if (id && id !== s.shortcut_app_id) await call("save_settings", { shortcut_app_id: id });
   if (!id) toast("DeckScreen", "Não consegui criar o atalho na Steam. Reinicie a Steam e tente de novo.");
-  else applyGyro(id, s.gyro);
+  else applyMotion(id, s.motion);
   return id;
 }
 
@@ -216,7 +220,22 @@ const PROFILE_OPTS = opts([["desktop", "Área de trabalho"], ["cemu", "Wii U (Ce
 const PRESET_OPTS = opts([["low_latency", "Baixa latência"], ["balanced", "Equilibrado"], ["quality", "Qualidade (mais suave)"]]);
 const CODEC_OPTS = opts([["auto", "Automático"], ["HEVC", "HEVC (recomendado)"], ["H.264", "H.264"]]);
 const RES_OPTS = opts([["1280x800", "1280×800 (nativa do Deck)"], ["1920x1080", "1920×1080"], ["1920x1200", "1920×1200"], ["2560x1600", "2560×1600"]]);
+const MOTION_OPTS = opts([["off", "Desligado"], ["dsu", "Para emuladores (mantém o Steam Input)"], ["direct", "Direto pelo Moonlight (desliga o Steam Input)"]]);
 const FPS_OPTS = opts([[30, "30"], [40, "40"], [60, "60"], [90, "90 (Deck OLED)"]]);
+
+function describeMotion(m: MotionStatus | null): string {
+  if (!m) return "";
+  if (m.mode === "direct") return "O Steam Input fica desligado no atalho DeckScreen: os trackpads deixam de funcionar como mouse.";
+  if (m.mode !== "dsu") return "";
+  if (!m.running) return `Não consegui abrir a porta UDP ${m.port}.`;
+  const lines = [`No emulador do PC (Cemu, Dolphin, Ryujinx…): fonte de movimento DSU/cemuhook em ${m.deck_ip || "IP do Deck"}:${m.port}.`];
+  if (m.error) lines.push("⚠ " + m.error);
+  if (m.clients && m.clients.length) {
+    lines.push(`Conectado: ${m.clients.join(", ")}`);
+    if (!m.imu_active) lines.push("⚠ A Steam não está mandando o giroscópio: no layout do controle do DeckScreen, use o giroscópio em alguma ação (ex.: \"como mouse\" ativado por um botão que você não usa).");
+  }
+  return lines.join("\n");
+}
 
 function describeTest(t: TestResult): string {
   const lines: string[] = [];
@@ -243,12 +262,14 @@ function Content() {
   const [test, setTest] = useState(null as TestResult | null);
   const [checks, setChecks] = useState(null as Check[] | null);
   const [showVideo, setShowVideo] = useState(false);
+  const [motion, setMotion] = useState(null as MotionStatus | null);
 
   const refresh = async () => {
     const ns = await call<DeckSettings>("get_settings");
     setS(ns);
     if (ns.host && ns.host.paired) setStatus(await call<Result<HostStatus>>("host_status"));
     else setStatus(null);
+    setMotion(ns.motion === "off" ? null : await call<MotionStatus>("motion_status"));
   };
 
   useEffect(() => {
@@ -270,7 +291,10 @@ function Content() {
   const updateDeck = async (patch: any) => {
     const ns = await call<DeckSettings>("save_settings", patch);
     setS(ns);
-    if ("gyro" in patch && ns.shortcut_app_id) applyGyro(ns.shortcut_app_id, ns.gyro);
+    if ("motion" in patch) {
+      if (ns.shortcut_app_id) applyMotion(ns.shortcut_app_id, ns.motion);
+      setMotion(ns.motion === "off" ? null : await call<MotionStatus>("motion_status"));
+    }
   };
 
   // ---------- Moonlight
@@ -436,10 +460,8 @@ function Content() {
       h(Toggle, { label: "Mostrar medidor de atraso", desc: "Sobreposição do Moonlight com o tempo de rede e decodificação.", checked: s.overlay, onChange: (v) => updateDeck({ overlay: v }) }),
       h(Toggle, { label: "Toque = clique direto", desc: "Tocar na tela clica onde você tocou.", checked: s.absolute_touch, onChange: (v) => updateDeck({ absolute_touch: v }) }),
       h(Toggle, { label: "Som no PC", desc: "Desligado: o som sai no Deck.", checked: s.audio_on_host, onChange: (v) => updateDeck({ audio_on_host: v }) }),
-      h(Toggle, {
-        label: "Giroscópio (experimental)", checked: s.gyro, onChange: (v) => updateDeck({ gyro: v }),
-        desc: "Desliga o Steam Input no atalho DeckScreen para o sensor de movimento chegar ao PC. Os trackpads deixam de funcionar como mouse.",
-      }),
+      h(Drop, { label: "Giroscópio", options: MOTION_OPTS, value: s.motion, onChange: (v) => updateDeck({ motion: v }) }),
+      motion && h(Row, null, h(Note, null, describeMotion(motion))),
       h(Toggle, { label: "Opções de vídeo", checked: showVideo, onChange: setShowVideo }),
       showVideo && h(Fragment, null,
         h(Drop, { label: "Codec", options: CODEC_OPTS, value: s.codec, onChange: (v) => updateDeck({ codec: v }) }),

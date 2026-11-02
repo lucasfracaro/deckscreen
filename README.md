@@ -115,7 +115,7 @@ Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam. Dep
 | **Latência** | *Baixa latência* (sem V-Sync), *Equilibrado* ou *Qualidade* |
 | **Medidor de atraso** | sobreposição do Moonlight com os tempos de rede e decodificação |
 | **Toque = clique direto / Som no PC** | como a tela de toque e o áudio se comportam |
-| **Giroscópio (experimental)** | desliga o Steam Input no atalho para o sensor de movimento chegar ao PC |
+| **Giroscópio** | *Para emuladores* (padrão): o Deck vira uma fonte de movimento DSU/cemuhook na porta UDP 26760, e o Steam Input continua ligado (trackpad como mouse, layouts). *Direto pelo Moonlight*: desliga o Steam Input no atalho; os trackpads deixam de ser mouse |
 | **Codec / Resolução / FPS / Bitrate** | HEVC por padrão; 90 FPS no Deck OLED |
 | **Ligar o PC** | Wake-on-LAN: funciona com o PC suspenso e no cabo (ative também na BIOS) |
 | **Testar conexão / Diagnóstico do PC** | mede a rede, aponta problemas e confere a instalação do PC |
@@ -133,7 +133,9 @@ Para testar antes com um Sunshine compilado com a opção (por exemplo, a branch
 
 ### Experiência Wii U com o Cemu
 
-No Cemu, ative **Options → Separate GamePad view**. No Deck, escolha o perfil **Wii U (Cemu)** com o modo **Estender** e toque em **Conectar**. O jogo fica no monitor ou na TV, e a tela do GamePad aparece em tela cheia no Deck, com toque. Para emuladores de duas telas (DS/3DS), use o perfil **Personalizado** com parte do título da segunda janela.
+No Cemu, ative **Options → Separate GamePad view**.
+
+**Giroscópio no Cemu:** deixe o Giroscópio do DeckScreen em *Para emuladores*. Em **Options → Input settings**, no *Wii U GamePad*, mantenha o controle *SDLController* (os botões que chegam pelo Sunshine) e adicione um segundo, *DSUController*, com o IP do Deck (aparece no plugin) e a porta `26760`. O Dolphin, o Ryujinx e o Citra/Lime3DS aceitam a mesma fonte "DSU/cemuhook". Se o plugin avisar que a Steam não está mandando o giroscópio, use o giroscópio em alguma ação no layout de controle do atalho DeckScreen (por exemplo, "como mouse" ativado por um botão que você não usa): a Steam desliga o sensor quando nenhuma ação usa o giroscópio. No Deck, escolha o perfil **Wii U (Cemu)** com o modo **Estender** e toque em **Conectar**. O jogo fica no monitor ou na TV, e a tela do GamePad aparece em tela cheia no Deck, com toque. Para emuladores de duas telas (DS/3DS), use o perfil **Personalizado** com parte do título da segunda janela.
 
 ## Comandos no PC
 
@@ -197,6 +199,6 @@ cd host && cargo test            # 30 testes do serviço
 
 Releases são publicadas pelo GitHub Actions ao criar uma tag `v*`, com binário estático (musl) que roda em qualquer distro.
 
-Créditos: a técnica de tela virtual com `krfb-virtualmonitor` + captura `kwin` foi inspirada no [Sunveil](https://github.com/ImStillBlue/sunshine-virtual-display), e a abertura do Moonlight por atalho da Steam no [MoonDeck](https://github.com/FrogTheFrog/moondeck).
+Créditos: a técnica de tela virtual com `krfb-virtualmonitor` + captura `kwin` foi inspirada no [Sunveil](https://github.com/ImStillBlue/sunshine-virtual-display), a abertura do Moonlight por atalho da Steam no [MoonDeck](https://github.com/FrogTheFrog/moondeck), e o servidor de giroscópio segue a conversão de eixos do [SteamDeckGyroDSU](https://github.com/kmicki/SteamDeckGyroDSU) (MIT).
 
 Licença: MIT.

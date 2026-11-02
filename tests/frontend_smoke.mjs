@@ -1,5 +1,5 @@
 // Smoke test for the Decky frontend: fake React + fake @decky/ui + fake Steam client.
-// Walks: find PC -> pair -> connect -> settings/profile/gyro -> test -> doctor -> stop -> offline wake.
+// Walks: find PC -> pair -> connect -> settings/profile/motion -> test -> doctor -> stop -> offline wake.
 // Run from deck/: node ../tests/frontend_smoke.mjs
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
@@ -52,7 +52,7 @@ globalThis.window = {
 
 // ---------- fake backend (mirrors main.py responses)
 const be = {
-  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", gyro: false, polls: 0, online: true,
+  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", motion: "dsu", polls: 0, online: true,
   hostSettings: { mode: "extend", position: "right", scale: 1, orientation: "landscape", profile: "desktop",
     open_app: true, close_app: false, custom: { rules: [], fullscreen: true, command: "" } },
 };
@@ -60,16 +60,17 @@ const hostList = () => Object.entries(be.hosts).map(([id, h]) => ({ id, ...h }))
 const settings = () => ({
   hosts: hostList(), host: hostList().find((h) => h.id === be.active) || null, active: be.active,
   resolution: "1280x800", fps: be.fps, bitrate: 20000, preset: be.preset, codec: "auto", overlay: false,
-  audio_on_host: false, absolute_touch: true, gyro: be.gyro, shortcut_app_id: be.shortcut_app_id,
+  audio_on_host: false, absolute_touch: true, motion: be.motion, shortcut_app_id: be.shortcut_app_id,
 });
 const backend = {
   get_settings: () => settings(),
   save_settings: (p) => {
     if (p.shortcut_app_id) be.shortcut_app_id = p.shortcut_app_id;
-    for (const k of ["fps", "preset", "gyro"]) if (k in p) be[k] = p[k];
+    for (const k of ["fps", "preset", "motion"]) if (k in p) be[k] = p[k];
     return settings();
   },
   moonlight_status: () => ({ installed: true }),
+  motion_status: () => ({ running: true, port: 26760, mode: be.motion, deck_ip: "192.168.0.20", clients: ["192.168.0.10"], imu_active: false }),
   discover: () => [{ ip: "192.168.0.10", port: 47555, name: "cachyos-pc", capability: "virtual" }],
   add_host: (ip, port) => { be.hosts["cachyos-pc"] = { ip, port, name: "cachyos-pc", paired: false, mac: "", wired: null, capability: "virtual" }; be.active = "cachyos-pc"; return { ok: true, id: "cachyos-pc" }; },
   select_host: (id) => { be.active = id; return true; },
@@ -188,9 +189,13 @@ find(tree, "TextField", "Janelas").props.onChange({ target: { value: "Secondary,
 tree = await render();
 tree = await click("Salvar perfil");
 assert.deepEqual(be.hostSettings.custom.rules, ["Secondary", "Top Screen"]);
-// deck: gyro + preset
-await find(tree, "ToggleField", "Giroscópio").props.onChange(true);
-assert.ok(log.includes("steaminput:0"), "gyro turns Steam Input off");
+// deck: motion + preset
+tree = await render();
+assert.ok(text({ kids: tree }).includes("192.168.0.20:26760"), "DSU address shown");
+assert.ok(text({ kids: tree }).includes("não está mandando o giroscópio"), "Steam IMU hint shown");
+assert.ok(!log.includes("steaminput:0"), "DSU keeps Steam Input on");
+await find(tree, "DropdownItem", "Giroscópio").props.onChange({ data: "direct" });
+assert.ok(log.includes("steaminput:0"), "direct mode turns Steam Input off");
 await find(tree, "DropdownItem", "Latência").props.onChange({ data: "quality" });
 assert.equal(be.preset, "quality");
 // tests
