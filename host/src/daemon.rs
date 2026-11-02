@@ -81,6 +81,19 @@ impl Screen {
         }
     }
 
+    /// Settings changed while connected: re-lay out the Deck screen right away when the backend can.
+    pub fn rearrange(&mut self, s: &crate::config::Settings) -> Result<(), String> {
+        if self.session.is_none() || self.output.is_none() {
+            return Ok(());
+        }
+        self.backend.rearrange(s, &resolve_profile(s))?;
+        if let Some(Json::Obj(m)) = self.session.as_mut() {
+            m.retain(|(k, _)| k != "mode");
+            m.push(("mode".into(), Json::Str(s.mode.clone())));
+        }
+        Ok(())
+    }
+
     fn launch_app(&mut self, cmd: &[String]) {
         if let Some(c) = self.app.as_mut() {
             if c.try_wait().ok().flatten().is_none() {
@@ -309,6 +322,17 @@ impl State {
     /// Settings changed. On GNOME, switching to/from "mirror" changes how Sunshine
     /// captures (virtual monitor vs. real screen), which needs a Sunshine restart.
     pub fn settings_changed(&self, old: &crate::config::Settings, new: &crate::config::Settings) {
+        let layout = |x: &crate::config::Settings| {
+            format!(
+                "{}|{}|{}|{}|{}|{:?}",
+                x.mode, x.position, x.scale, x.orientation, x.profile, x.custom_rules
+            )
+        };
+        if layout(old) != layout(new) {
+            if let Err(e) = self.screen.lock().unwrap().rearrange(new) {
+                crate::info!("configuração da tela {e}");
+            }
+        }
         let was = old.mode == "mirror";
         let now = new.mode == "mirror";
         if self.desktop != Desktop::Gnome || !display::gnome_virtual() || was == now {

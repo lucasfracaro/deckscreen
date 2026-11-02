@@ -122,6 +122,11 @@ pub trait Backend: Send {
     fn alive(&mut self) -> bool;
     /// Called once at daemon start: undo leftovers from a crash.
     fn recover(&mut self) {}
+    /// Apply new settings (mode, position, scale, orientation, window rules) to the running
+    /// session without recreating the screen. Err = only takes effect on the next connection.
+    fn rearrange(&mut self, _s: &Settings, _p: &Profile) -> Result<(), String> {
+        Err("vale na próxima conexão".into())
+    }
 }
 
 pub fn backend_for(d: Desktop) -> Box<dyn Backend> {
@@ -412,6 +417,88 @@ impl KdeBackend {
     }
 }
 
+impl KdeBackend {
+    /// Scale, rotation and the extend / deck_only / mirror layout of the Deck output.
+    fn arrange(&mut self, out: &str, s: &Settings, p: &Profile) {
+        if (s.scale - 1.0).abs() > 0.001 {
+            self.ks.apply(&[format!("output.{out}.scale.{}", s.scale)]);
+        }
+        match s.orientation.as_str() {
+            "portrait" => {
+                self.ks.apply(&[format!("output.{out}.rotation.right")]);
+            }
+            "portrait_flipped" => {
+                self.ks.apply(&[format!("output.{out}.rotation.left")]);
+            }
+            _ => {}
+        }
+
+        match s.mode.as_str() {
+            "deck_only" => {
+                // enable/primary first so there is never zero screens
+                self.ks.apply(&[
+                    format!("output.{out}.enable"),
+                    format!("output.{out}.position.0,0"),
+                    format!("output.{out}.primary"),
+                ]);
+                let off: Vec<String> = self
+                    .snapshot
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .map(|s| format!("output.{}.disable", s.name))
+                    .collect();
+                self.ks.apply(&off);
+            }
+            "mirror" => {
+                let prim = self
+                    .snapshot
+                    .iter()
+                    .find(|s| s.enabled && s.primary)
+                    .or_else(|| self.snapshot.iter().find(|s| s.enabled));
+                if let Some(prim) = prim {
+                    let prim = prim.name.clone();
+                    self.ks
+                        .apply(&[format!("output.{out}.enable"), format!("output.{out}.mirror.{prim}")]);
+                }
+            }
+            _ => {
+                let layout = self
+                    .ks
+                    .outputs()
+                    .map(|o| plan_layout(&o, &out, &s.position))
+                    .unwrap_or_default();
+                let mut ops = vec![format!("output.{out}.enable")];
+                ops.extend(layout.iter().map(|(n, x, y)| format!("output.{n}.position.{x},{y}")));
+                self.ks.apply(&ops);
+                if !p.rules.is_empty() {
+                    self.load_rules(&out, &p.rules, p.fullscreen);
+                }
+            }
+        }
+    }
+
+    /// Put the PC's monitors back as they were (snapshot) and the Deck output in a neutral state.
+    fn reset_layout(&mut self, out: &str) {
+        if self.script_loaded {
+            self.ks.kwin("unloadScript", &[KWIN_SCRIPT]);
+            self.script_loaded = false;
+        }
+        // one call each: an op an older kscreen-doctor doesn't know must not cancel the others
+        for op in ["mirror.none", "rotation.none", "scale.1"] {
+            self.ks.apply(&[format!("output.{out}.{op}")]);
+        }
+        let mut ops = vec![format!("output.{out}.enable")];
+        for sn in self.snapshot.iter().filter(|sn| sn.enabled) {
+            ops.push(format!("output.{}.enable", sn.name));
+            ops.push(format!("output.{}.position.{},{}", sn.name, sn.x, sn.y));
+        }
+        if let Some(pr) = self.snapshot.iter().find(|sn| sn.enabled && sn.primary) {
+            ops.push(format!("output.{}.primary", pr.name));
+        }
+        self.ks.apply(&ops);
+    }
+}
+
 impl Backend for KdeBackend {
     fn name(&self) -> &'static str {
         "kde"
@@ -488,61 +575,7 @@ impl Backend for KdeBackend {
         if !self.ks.apply(&[format!("output.{out}.mode.{w}x{h}@{fps}")]) {
             self.ks.apply(&[format!("output.{out}.mode.{w}x{h}")]);
         }
-        if (s.scale - 1.0).abs() > 0.001 {
-            self.ks.apply(&[format!("output.{out}.scale.{}", s.scale)]);
-        }
-        match s.orientation.as_str() {
-            "portrait" => {
-                self.ks.apply(&[format!("output.{out}.rotation.right")]);
-            }
-            "portrait_flipped" => {
-                self.ks.apply(&[format!("output.{out}.rotation.left")]);
-            }
-            _ => {}
-        }
-
-        match s.mode.as_str() {
-            "deck_only" => {
-                // enable/primary first so there is never zero screens
-                self.ks.apply(&[
-                    format!("output.{out}.enable"),
-                    format!("output.{out}.position.0,0"),
-                    format!("output.{out}.primary"),
-                ]);
-                let off: Vec<String> = self
-                    .snapshot
-                    .iter()
-                    .filter(|s| s.enabled)
-                    .map(|s| format!("output.{}.disable", s.name))
-                    .collect();
-                self.ks.apply(&off);
-            }
-            "mirror" => {
-                let prim = self
-                    .snapshot
-                    .iter()
-                    .find(|s| s.enabled && s.primary)
-                    .or_else(|| self.snapshot.iter().find(|s| s.enabled));
-                if let Some(prim) = prim {
-                    let prim = prim.name.clone();
-                    self.ks
-                        .apply(&[format!("output.{out}.enable"), format!("output.{out}.mirror.{prim}")]);
-                }
-            }
-            _ => {
-                let layout = self
-                    .ks
-                    .outputs()
-                    .map(|o| plan_layout(&o, &out, &s.position))
-                    .unwrap_or_default();
-                let mut ops = vec![format!("output.{out}.enable")];
-                ops.extend(layout.iter().map(|(n, x, y)| format!("output.{n}.position.{x},{y}")));
-                self.ks.apply(&ops);
-                if !p.rules.is_empty() {
-                    self.load_rules(&out, &p.rules, p.fullscreen);
-                }
-            }
-        }
+        self.arrange(&out, s, p);
         Ok(out)
     }
 
@@ -583,6 +616,14 @@ impl Backend for KdeBackend {
         }
         let _ = std::fs::remove_file(restore_file());
         self.output = None;
+    }
+
+    fn rearrange(&mut self, s: &Settings, p: &Profile) -> Result<(), String> {
+        let out = self.output.clone().ok_or("nenhuma tela do Deck ativa")?;
+        self.reset_layout(&out);
+        self.arrange(&out, s, p);
+        crate::info!("tela do Deck reconfigurada: modo {}", s.mode);
+        Ok(())
     }
 
     fn alive(&mut self) -> bool {
@@ -1350,6 +1391,41 @@ pub mod tests {
         assert!(ks.outs.lock().unwrap().iter().all(|o| !o.bool_at("enabled", true)));
         b.stop();
         assert!(ks.outs.lock().unwrap().iter().all(|o| o.bool_at("enabled", false)));
+    }
+
+    #[test]
+    fn kde_rearrange_live() {
+        util::test_env();
+        let ks = FakeKs::new();
+        let mut b = KdeBackend::new(Box::new(ks.clone()));
+        b.poll_ms = 1;
+        b.start(&req(), &settings("extend"), &Profile::default()).unwrap();
+        assert!(ks.outs.lock().unwrap().iter().all(|o| o.bool_at("enabled", false)));
+        b.rearrange(&settings("deck_only"), &Profile::default()).unwrap();
+        assert!(
+            ks.outs.lock().unwrap().iter().all(|o| !o.bool_at("enabled", true)),
+            "PC monitors off"
+        );
+        b.rearrange(&settings("mirror"), &Profile::default()).unwrap();
+        assert!(
+            ks.outs.lock().unwrap().iter().all(|o| o.bool_at("enabled", false)),
+            "monitors back on"
+        );
+        let applied = ks.applied.lock().unwrap().clone();
+        assert!(applied.contains(&format!("output.{KDE_OUTPUT}.mirror.DP-1")));
+        b.rearrange(&settings("extend"), &Profile::default()).unwrap();
+        let applied = ks.applied.lock().unwrap().clone();
+        assert_eq!(
+            applied
+                .last()
+                .map(|s| s.as_str())
+                .filter(|s| s.contains("position"))
+                .is_some(),
+            true
+        );
+        assert!(applied.contains(&format!("output.{KDE_OUTPUT}.mirror.none")));
+        b.stop();
+        assert!(b.rearrange(&settings("extend"), &Profile::default()).is_err());
     }
 
     #[test]

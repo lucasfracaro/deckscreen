@@ -374,6 +374,8 @@ O acesso ao sistema passa pelo trait `KScreen` (com `RealKScreen` em produção 
 
 As strings vão para o script serializadas como JSON, o que evita injeção. O arquivo fica em `~/.local/share/deckscreen/window-rules.js` e é carregado com o nome `deckscreen-window-rules`.
 
+- **Mudança ao vivo:** se modo, posição, escala, orientação ou perfil mudarem com o Deck conectado, `State::settings_changed` chama `Screen::rearrange` → `KdeBackend::rearrange`: `reset_layout` devolve os monitores do PC ao estado salvo e deixa a saída do Deck neutra (`mirror.none`, `rotation.none`, `scale.1`, cada uma numa chamada separada), e `arrange` aplica o modo novo sem recriar a tela. Nos outros backends a mudança vale na próxima conexão.
+
 #### Hyprland (`HyprBackend`, experimental)
 
 - `hyprctl output create headless DeckScreen` cria a saída; a espera é feita lendo `hyprctl -j monitors all`.
