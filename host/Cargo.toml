@@ -1,0 +1,17 @@
+[package]
+name = "deckscreen-host"
+version = "2.0.0"
+edition = "2021"
+rust-version = "1.80"
+description = "DeckScreen: Steam Deck como segunda tela e controle do PC Linux (estilo Wii U GamePad)"
+license = "MIT"
+repository = "https://github.com/lucasfracaro/deckscreen"
+
+# Sem dependências externas de propósito: compila em qualquer lugar com só o rustc.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

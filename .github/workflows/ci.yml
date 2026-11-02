@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust (stable)
+        run: rustup toolchain install stable --profile minimal -c clippy,rustfmt && rustup default stable
+
+      - name: Formatação e lint
+        working-directory: host
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --release -- -D warnings
+
+      - name: Testes do serviço (Rust)
+        working-directory: host
+        run: cargo test --locked --release
+
+      - name: Build
+        working-directory: host
+        run: cargo build --locked --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Plugin do Deck (TypeScript + teste de fumaça)
+        working-directory: deck
+        run: |
+          npm install -g typescript@5
+          tsc -p tsconfig.json
+          node ../tests/frontend_smoke.mjs
+
+      - name: Backend do Deck (Python) e ponta a ponta
+        run: |
+          python3 -m unittest discover -s tests -v
+          python3 tests/integration.py host/target/release/deckscreen-host

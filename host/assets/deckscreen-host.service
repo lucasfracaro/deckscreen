@@ -1,0 +1,15 @@
+[Unit]
+Description=DeckScreen (Steam Deck como segunda tela e controle)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@BIN@ daemon
+# Restaura os monitores antes de o serviço parar (logout, desligar, atualização).
+ExecStop=@BIN@ stop --quiet
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

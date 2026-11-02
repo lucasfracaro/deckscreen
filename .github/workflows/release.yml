@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust estático (musl)
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          rustup toolchain install stable --profile minimal && rustup default stable
+          rustup target add x86_64-unknown-linux-musl
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Testes e pacotes
+        env:
+          TARGET: x86_64-unknown-linux-musl
+        run: |
+          npm install -g typescript@5
+          ./build.sh
+
+      - name: Publicar a release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          body: |
+            ## Como instalar
+
+            **No PC (qualquer distro Linux):** baixe `DeckScreen-*-x86_64.AppImage`, dê permissão de execução e abra
+            (ou rode `./DeckScreen-*.AppImage install` no terminal).
+
+            **CachyOS / Arch:** `deckscreen-host-*.tar.gz` → `./install.sh`, ou o PKGBUILD em `packaging/arch`.
+
+            **No Steam Deck:** `DeckScreen-decky.zip` → Decky → ⚙ → Desenvolvedor → Instalar plugin de ZIP.
+
+            Passo a passo completo no [README](https://github.com/${{ github.repository }}#readme).

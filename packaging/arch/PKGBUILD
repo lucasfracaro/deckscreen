@@ -1,0 +1,41 @@
+# Maintainer: Lucas Fracaro <lucasgfracaro@gmail.com>
+pkgname=deckscreen-host
+pkgver=2.0.0
+pkgrel=1
+pkgdesc="Steam Deck como segunda tela e controle do PC, estilo Wii U GamePad (lado do PC)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/lucasfracaro/deckscreen"
+license=('MIT')
+depends=('curl' 'iproute2' 'libnotify' 'gcc-libs' 'glibc')
+makedepends=('cargo')
+optdepends=(
+  'sunshine: transmite tela, som e controle (ou sunshine-bin do AUR)'
+  'krfb: cria a tela virtual no KDE Plasma'
+  'kscreen: posiciona a tela do Deck no KDE Plasma'
+  'glib2: modo Wii U (regras de janela) no KDE Plasma'
+  'networkmanager: ativar Wake-on-LAN pelo instalador'
+)
+install=deckscreen-host.install
+source=("deckscreen-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "deckscreen-$pkgver/host"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "deckscreen-$pkgver/host"
+  cargo test --frozen --release
+}
+
+package() {
+  cd "deckscreen-$pkgver"
+  install -Dm755 host/target/release/deckscreen-host "$pkgdir/usr/bin/deckscreen-host"
+  sed 's|@BIN@|/usr/bin/deckscreen-host|g' host/assets/deckscreen-host.service \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/deckscreen-host.service"
+  install -Dm644 host/assets/deckscreen.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/deckscreen.svg"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

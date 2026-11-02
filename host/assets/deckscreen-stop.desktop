@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DeckScreen: desconectar o Steam Deck
+Comment=Remove a tela do Deck e restaura os monitores do PC
+Exec=@BIN@ stop
+Icon=video-display
+Terminal=false
+Categories=Utility;
+Keywords=deck;steam;monitor;sunshine;

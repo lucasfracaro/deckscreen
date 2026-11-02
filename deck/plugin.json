@@ -1,0 +1,16 @@
+{
+  "name": "DeckScreen",
+  "author": "Lucas Fracaro",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "streaming",
+      "moonlight",
+      "sunshine",
+      "second-screen"
+    ],
+    "description": "Steam Deck como segunda tela e controle do PC Linux (estilo Wii U GamePad), via Sunshine + Moonlight.",
+    "image": "https://raw.githubusercontent.com/lucasfracaro/deckscreen/main/host/assets/deckscreen.svg"
+  }
+}

@@ -1,0 +1,17 @@
+{
+    "KPlugin": {
+        "Authors": [{ "Name": "Lucas Fracaro" }],
+        "Category": "System Information",
+        "Description": "Estado da tela do Steam Deck e pedidos de pareamento",
+        "Icon": "video-display",
+        "Id": "org.deckscreen.status",
+        "License": "MIT",
+        "Name": "DeckScreen",
+        "Version": "2.0.0",
+        "Website": "https://github.com/lucasfracaro/deckscreen"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "Hardware"
+}

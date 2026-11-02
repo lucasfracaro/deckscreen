@@ -1,0 +1,168 @@
+# DeckScreen
+
+<img src="host/assets/deckscreen.svg" width="96" align="right" alt="">
+
+Transforma o **Steam Deck** em **segunda tela + controle** do seu PC Linux, no estilo do GamePad do Wii U.
+
+- **Tela extra de verdade:** a tela do Deck vira mais um monitor do PC. Você arrasta janelas para ela e toca para clicar.
+- **Controle:** botões, analógicos e trackpads do Deck chegam ao PC como um controle (com giroscópio opcional).
+- **Modo Wii U (Cemu):** a janela do GamePad vai sozinha para o Deck, em tela cheia, e o jogo fica no monitor/TV.
+- **Só no Deck:** desliga os monitores do PC enquanto você joga pelo Deck e religa tudo ao desconectar.
+- **Espelhar** e **tela vertical** (experimental).
+- **Liga o PC pelo Deck** (Wake-on-LAN), **teste de conexão** com dicas e **diagnóstico** do PC, tudo no Modo Jogo.
+- Tudo pelo menu **Decky**, com vários PCs salvos.
+
+> O vídeo, o som e o controle viajam pelo **Sunshine** (PC) e pelo **Moonlight** (Deck), projetos abertos e consagrados. O DeckScreen junta tudo: cria a tela virtual, configura o Sunshine, faz o pareamento com um clique e abre o Moonlight com as opções certas.
+
+```
+ Steam Deck (Modo Jogo)                          PC Linux
+┌───────────────────────────┐   rede local   ┌──────────────────────────────────────┐
+│ Plugin Decky "DeckScreen" │ ─ HTTP 47555 ──▶│ deckscreen-host (Rust, serviço)      │
+│   PCs, pareamento, opções │   (assinado)   │   pareamento, tela virtual, perfis,  │
+│   teste de rede, WoL      │ ◀─ UDP 47556 ── │   diagnóstico, widget do KDE         │
+│ Moonlight (Flatpak)       │ ◀── vídeo ───── │ Sunshine                             │
+│   tela, toque, controle   │ ── controle ──▶ │                                      │
+└───────────────────────────┘                └──────────────────────────────────────┘
+```
+
+## O que funciona em cada área de trabalho
+
+| PC | Deck como monitor extra | Espelhar + controle |
+|---|---|---|
+| **KDE Plasma 6 (Wayland)**, ex.: CachyOS, Fedora KDE, Kubuntu | ✅ completo, com widget na bandeja | ✅ |
+| **Hyprland** | 🧪 experimental | ✅ |
+| GNOME, X11 e outras | ❌ (não permitem um monitor virtual utilizável) | ✅ |
+
+## O atraso é alto?
+
+Em rede local costuma ficar perto de **um quadro (≈16 ms a 60 FPS)**: o Deck decodifica o vídeo em menos de 1 ms, e o resto vem da compressão no PC e da rede. O que mais pesa é o **Wi-Fi**: use 5/6 GHz no Deck e, de preferência, o PC no cabo. No menu do Deck, **Testar conexão** mede a sua rede e diz o que melhorar, e **Mostrar medidor de atraso** exibe os números durante o uso.
+
+---
+
+## Instalação no PC
+
+### Qualquer distro: AppImage
+
+1. Baixe `DeckScreen-<versão>-x86_64.AppImage` em [Releases](../../releases).
+2. Dê permissão de execução (botão direito → Propriedades → "Executável") e abra com dois cliques. Se preferir, no terminal:
+   ```bash
+   chmod +x DeckScreen-*.AppImage
+   ./DeckScreen-*.AppImage install
+   ```
+
+O instalador se copia para `~/.local/bin`, então o AppImage pode ser apagado depois. Ele também:
+- instala o que faltar pelo gerenciador da sua distro (pacman, apt, dnf ou zypper);
+- instala o **Sunshine** se ele não estiver no PC (pacote no Arch, AppImage oficial nas outras distros);
+- configura o Sunshine, com backup dos arquivos originais;
+- cria o serviço de usuário, o widget do KDE e o atalho "DeckScreen: desconectar";
+- libera as portas no firewall e ativa o Wake-on-LAN, sempre perguntando antes;
+- termina com um diagnóstico completo.
+
+### CachyOS / Arch
+
+Use o AppImage acima, ou:
+
+```bash
+# pacote de release (binário pronto)
+tar xzf deckscreen-host-*-x86_64.tar.gz && cd deckscreen-host-* && ./install.sh
+
+# ou pelo código-fonte (compila com cargo)
+git clone https://github.com/lucasfracaro/deckscreen && cd deckscreen && ./install.sh
+
+# ou como pacote do pacman
+cd packaging/arch && makepkg -si && deckscreen-host install
+```
+
+## Instalação no Steam Deck
+
+1. Copie `DeckScreen-decky.zip` para o Deck (pendrive, KDE Connect, Warpinator ou download no Modo Desktop).
+2. Abra **⋯ → Decky → ⚙ → Geral** e ative o **Modo desenvolvedor**.
+3. Em **Desenvolvedor → Instalar plugin de arquivo ZIP**, escolha o zip.
+
+## Primeiro uso
+
+1. **⋯ → Decky → DeckScreen.** Se o Moonlight faltar, toque em **Instalar Moonlight**.
+2. **Procurar PC na rede** → escolha o seu PC. Se ele não aparecer, digite o IP: o instalador mostra o IP no final.
+3. **Parear com este PC.** O Deck mostra um PIN.
+4. No PC, aceite a notificação **"Steam Deck quer se conectar — PIN 1234"**. Também dá para aceitar pelo widget da bandeja ou com `deckscreen-host accept`.
+5. **Conectar.** Pronto.
+
+Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam: ele abre a última conexão direto.
+
+## Opções
+
+| No Deck | |
+|---|---|
+| **Modo** | Estender, Só no Deck ou Espelhar |
+| **Posição / Escala / Orientação** | lado do monitor principal, tamanho do texto, horizontal ou vertical |
+| **Perfil** | *Área de trabalho*, *Wii U (Cemu)* (abre o Cemu e manda a janela do GamePad para o Deck) ou *Personalizado* (você escolhe as janelas e o comando) |
+| **Latência** | *Baixa latência* (sem V-Sync), *Equilibrado* ou *Qualidade* |
+| **Medidor de atraso** | sobreposição do Moonlight com os tempos de rede e decodificação |
+| **Toque = clique direto / Som no PC** | como a tela de toque e o áudio se comportam |
+| **Giroscópio (experimental)** | desliga o Steam Input no atalho para o sensor de movimento chegar ao PC |
+| **Codec / Resolução / FPS / Bitrate** | HEVC por padrão; 90 FPS no Deck OLED |
+| **Ligar o PC** | Wake-on-LAN: funciona com o PC suspenso e no cabo (ative também na BIOS) |
+| **Testar conexão / Diagnóstico do PC** | mede a rede, aponta problemas e confere a instalação do PC |
+
+### Experiência Wii U com o Cemu
+
+No Cemu, ative **Options → Separate GamePad view**. No Deck, escolha o perfil **Wii U (Cemu)** com o modo **Estender** e toque em **Conectar**. O jogo fica no monitor ou na TV, e a tela do GamePad aparece em tela cheia no Deck, com toque. Para emuladores de duas telas (DS/3DS), use o perfil **Personalizado** com parte do título da segunda janela.
+
+## Comandos no PC
+
+```bash
+deckscreen-host doctor      # diagnóstico completo
+deckscreen-host status      # estado atual
+deckscreen-host stop        # remove a tela do Deck e restaura os monitores (botão de pânico)
+deckscreen-host accept      # aceita o pedido de pareamento pendente
+deckscreen-host devices     # Decks pareados (forget ID para remover)
+deckscreen-host report      # gera um .tar.gz com logs, sem senhas, para pedir ajuda
+deckscreen-host uninstall   # remove do PC
+```
+
+## Problemas comuns
+
+| Sintoma | O que fazer |
+|---|---|
+| O Deck não acha o PC | Digite o IP. Confira o firewall e se não há "isolamento de clientes" no roteador |
+| "A tela virtual não apareceu" | Use a sessão **Plasma (Wayland)** e instale o `krfb` |
+| Tela preta | `deckscreen-host doctor`. O Sunshine **não pode ser a versão Flatpak** |
+| "Não acessa o Sunshine" | A senha da interface web mudou: rode `deckscreen-host install` de novo |
+| Cursor mexe, mas o clique não funciona | `systemctl --user restart app-dev.lizardbyte.app.Sunshine.service` |
+| Monitores do PC desligados ou fora do lugar | `deckscreen-host stop`. O serviço também restaura sozinho se algo cair |
+| "Relógio do Deck e do PC muito diferentes" | Ative a hora automática nos dois |
+
+**Portas:** TCP 47984, 47989, 48010 (Sunshine) e 47555 (DeckScreen); UDP 47998–48000 (Sunshine) e 47556 (busca automática).
+
+## Segurança
+
+- Um Deck só recebe acesso depois que **você aprova no PC**. Nesse momento ele recebe uma chave secreta de 256 bits.
+- Toda requisição do Deck é **assinada (HMAC-SHA256)** com horário e um código único. Uma requisição copiada ou alterada na rede é recusada.
+- O conteúdo das configurações trafega **sem criptografia** na rede local. A chave nunca é reenviada depois do pareamento.
+- O vídeo e o controle usam a criptografia do próprio Sunshine/Moonlight.
+- O controle local (widget, comandos) só aceita conexões de `127.0.0.1` e recusa páginas web.
+- A senha do Sunshine fica só no PC, em `~/.config/deckscreen/config.json` (permissão 600).
+
+---
+
+## Desenvolvimento
+
+```
+host/        serviço do PC em Rust, sem dependências externas (JSON, HTTP, SHA-256/HMAC próprios e testados)
+  assets/    widget do Plasma, unidade do systemd, ícone
+deck/        plugin do Decky: main.py (backend) + src/index.tsx (interface, compilada com tsc)
+packaging/   AppImage e PKGBUILD
+tests/       testes do plugin, teste de fumaça da interface e teste ponta a ponta Deck ↔ PC
+build.sh     roda todos os testes e gera release/ (AppImage, tar.gz, zip do Decky)
+```
+
+```bash
+cd host && cargo test            # 27 testes do serviço
+./build.sh                       # tudo + pacotes
+```
+
+Releases são publicadas pelo GitHub Actions ao criar uma tag `v*`, com binário estático (musl) que roda em qualquer distro.
+
+Créditos: a técnica de tela virtual com `krfb-virtualmonitor` + captura `kwin` foi inspirada no [Sunveil](https://github.com/ImStillBlue/sunshine-virtual-display), e a abertura do Moonlight por atalho da Steam no [MoonDeck](https://github.com/FrogTheFrog/moondeck).
+
+Licença: MIT.

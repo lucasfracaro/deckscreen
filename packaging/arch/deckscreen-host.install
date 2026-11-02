@@ -1,0 +1,16 @@
+post_install() {
+  echo ""
+  echo "  DeckScreen instalado. Agora, como seu usuário (sem sudo), rode:"
+  echo ""
+  echo "      deckscreen-host install"
+  echo ""
+  echo "  Ele configura o Sunshine, o serviço, o widget do KDE e o resto."
+}
+
+post_upgrade() {
+  echo "  Reinicie o serviço como seu usuário: systemctl --user restart deckscreen-host"
+}
+
+pre_remove() {
+  echo "  Antes de remover, rode como seu usuário: deckscreen-host uninstall"
+}
