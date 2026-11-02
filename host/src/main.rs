@@ -43,6 +43,7 @@ Uso diário
 Interno
   daemon [-v]     o serviço (usado pelo systemd)
   hook start|stop chamado pelo Sunshine ao abrir/fechar o app DeckScreen
+  sunshine-login [set]   mostra (ou troca) o login da interface web do Sunshine
   setup           só reconfigura o Sunshine
   gnome-virtual on|off   força o monitor extra no GNOME (Sunshine com portal_virtual_display)
   version
@@ -242,6 +243,7 @@ fn run(args: Vec<String>) -> i32 {
                 2
             }
         },
+        "sunshine-login" => install::sunshine_login(rest.first().map(String::as_str) == Some("set")),
         "gnome-virtual" => {
             // Advanced: force/disable GNOME extra-screen mode (e.g. testing a Sunshine
             // build with portal_virtual_display that we can't detect, like an AppImage).

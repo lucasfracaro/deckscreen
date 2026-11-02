@@ -143,6 +143,8 @@ deckscreen-host stop        # remove a tela do Deck e restaura os monitores (bot
 deckscreen-host accept      # aceita o pedido de pareamento pendente
 deckscreen-host devices     # Decks pareados (forget ID para remover)
 deckscreen-host report      # gera um .tar.gz com logs, sem senhas, para pedir ajuda
+deckscreen-host sunshine-login       # mostra o usuário e a senha da interface web do Sunshine
+deckscreen-host sunshine-login set   # troca o login (no Sunshine e no DeckScreen ao mesmo tempo)
 deckscreen-host uninstall   # remove do PC
 ```
 
@@ -153,7 +155,8 @@ deckscreen-host uninstall   # remove do PC
 | O Deck não acha o PC | Digite o IP. Confira o firewall e se não há "isolamento de clientes" no roteador |
 | "A tela virtual não apareceu" | Use a sessão **Plasma (Wayland)** e instale o `krfb` |
 | Tela preta | `deckscreen-host doctor`. O Sunshine **não pode ser a versão Flatpak** |
-| "Não acessa o Sunshine" | A senha da interface web mudou: rode `deckscreen-host install` de novo |
+| O Sunshine pede usuário e senha no navegador | Foi o instalador que criou esse login: veja com `deckscreen-host sunshine-login` ou troque com `deckscreen-host sunshine-login set` |
+| "Não acessa o Sunshine" | A senha da interface web mudou por fora: rode `deckscreen-host sunshine-login set` |
 | Cursor mexe, mas o clique não funciona | `systemctl --user restart app-dev.lizardbyte.app.Sunshine.service` |
 | Monitores do PC desligados ou fora do lugar | `deckscreen-host stop`. O serviço também restaura sozinho se algo cair |
 | "Relógio do Deck e do PC muito diferentes" | Ative a hora automática nos dois |

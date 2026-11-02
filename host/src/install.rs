@@ -220,6 +220,65 @@ fn report_gnome_support(desktop: Desktop) -> bool {
     on
 }
 
+/// `deckscreen-host sunshine-login [set]`: show the Sunshine web UI login that
+/// DeckScreen uses, or change it (in Sunshine and in DeckScreen at once).
+pub fn sunshine_login(set: bool) -> i32 {
+    let mut cfg = Config::load_default();
+    let (url, user, pass) = cfg.sunshine();
+    if !set {
+        if user.is_empty() {
+            println!("Nenhum login salvo. Rode 'deckscreen-host install' ou 'deckscreen-host sunshine-login set'.");
+            return 1;
+        }
+        let web = url.replace("127.0.0.1", "localhost");
+        println!("Interface web do Sunshine: {web}\n  usuário: {user}\n  senha:   {pass}");
+        println!("\nPara trocar por um usuário/senha seus: deckscreen-host sunshine-login set");
+        return 0;
+    }
+    if !util::is_tty() {
+        return fail("rode num terminal");
+    }
+    let Some(bin) = sunshine::find_binary() else {
+        return fail("Sunshine não encontrado");
+    };
+    let new_user = util::ask_line(&format!(
+        "Novo usuário [{}]: ",
+        if user.is_empty() { "deckscreen" } else { &user }
+    ));
+    let new_user = if new_user.is_empty() {
+        if user.is_empty() {
+            "deckscreen".to_string()
+        } else {
+            user
+        }
+    } else {
+        new_user
+    };
+    let p1 = util::ask_password("Nova senha: ");
+    let p2 = util::ask_password("Repita a senha: ");
+    if p1.is_empty() || p1 != p2 {
+        return fail("as senhas estão vazias ou não conferem");
+    }
+    let service = sunshine::service_name();
+    if let Some(s) = &service {
+        util::run("systemctl", &["--user", "stop", s]);
+    }
+    let okc = util::run(&bin, &["--creds", &new_user, &p1])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if let Some(s) = &service {
+        util::run("systemctl", &["--user", "start", s]);
+    }
+    if !okc {
+        return fail("o Sunshine não aceitou o novo login");
+    }
+    cfg.set_sunshine_creds(&new_user, &p1);
+    ok(&format!(
+        "Login do Sunshine trocado para '{new_user}' (no Sunshine e no DeckScreen)."
+    ));
+    0
+}
+
 fn sunshine_username() -> String {
     std::fs::read_to_string(util::sunshine_dir().join("sunshine_state.json"))
         .ok()
@@ -250,7 +309,10 @@ fn ensure_credentials(cfg: &mut Config, sun_bin: &str, service: Option<&str>, ye
             .unwrap_or(false)
         {
             cfg.set_sunshine_creds(user, &pass);
-            ok("Criei um login para a interface web do Sunshine (usuário 'deckscreen'; senha guardada em ~/.config/deckscreen).");
+            ok(&format!(
+                "Criei um login para a interface web do Sunshine: usuário '{user}', senha '{pass}'."
+            ));
+            println!("    Para ver de novo: deckscreen-host sunshine-login · para trocar: deckscreen-host sunshine-login set");
         } else {
             warn("não consegui criar o login do Sunshine; crie um em https://localhost:47990 e rode o instalador de novo");
         }
