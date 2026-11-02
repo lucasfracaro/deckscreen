@@ -70,8 +70,8 @@ const backend = {
     return settings();
   },
   moonlight_status: () => ({ installed: true }),
-  controller_layout: () => be.motion === "direct" || be.layout === "steam" ? { ok: true, url: "" }
-    : { ok: true, url: `template://controller_neptune_deckscreen_${be.layout === "auto" ? (be.hostSettings.profile === "desktop" ? "desktop" : "game") : be.layout}.vdf` },
+  controller_layout: () => be.motion === "direct" || be.layout === "steam" ? { ok: true, url: "", mode: be.layout }
+    : { ok: true, mode: be.layout, url: `template://controller_neptune_deckscreen_${be.layout === "auto" ? (be.hostSettings.profile === "desktop" ? "desktop" : "game") : be.layout}.vdf` },
   motion_status: () => ({ running: true, port: 26760, mode: be.motion, deck_ip: "192.168.0.20", clients: ["192.168.0.10"], imu_active: false }),
   discover: () => [{ ip: "192.168.0.10", port: 47555, name: "cachyos-pc", capability: "virtual" }],
   add_host: (ip, port) => { be.hosts["cachyos-pc"] = { ip, port, name: "cachyos-pc", paired: false, mac: "", wired: null, capability: "virtual" }; be.active = "cachyos-pc"; return { ok: true, id: "cachyos-pc" }; },
@@ -128,13 +128,15 @@ globalThis.SteamClient = {
     TerminateApp: (gid) => log.push(`terminate:${gid}`),
   },
   Input: {
-    GetConfigForAppAndController: async (id, idx) => ({ URL: layoutOf.get(`${id}/${idx}`) || "template://controller_neptune_gamepad_joystick.vdf" }),
+    GetConfigForAppAndController: async (id, idx) => idx === 15 ? ({ URL: layoutOf.get(`${id}/${idx}`) || "template://controller_neptune_gamepad_joystick.vdf", Title: "#Title" }) : null,
     SetSelectedConfigForApp: async (id, idx, url, preview, how) => {
-      if (preview === false && how === 1) { layoutOf.set(`${id}/${idx}`, url); log.push(`layout:${idx}:${url}`); }
+      if (!stuck && preview === false && how === 1) { layoutOf.set(`${id}/${idx}`, url); log.push(`layout:${idx}:${url}`); }
     },
   },
 };
 const layoutOf = new Map();
+let stuck = false;
+globalThis.SteamClient.User = { StartRestart: (force) => log.push(`restart-steam:${force}`) };
 window.ControllerStore = { m_controllerList: [{ strName: "Steam Deck Controller", nControllerIndex: 15, eControllerType: 4 }] };
 
 // ---------- load plugin
@@ -201,6 +203,17 @@ layoutOf.set("3000000001/15", "autosave:///home/deck/x/controller_neptune.vdf");
 const before = log.length;
 await find(tree, "DropdownItem", "Perfil").props.onChange({ data: "desktop" });
 assert.ok(!log.slice(before).some((l) => l.startsWith("layout:")), "a layout the user edited is never replaced");
+tree = await render();
+assert.ok(text({ kids: tree }).includes("Você editou o layout na Steam"), "user-edited layout explained");
+tree = await click("Aplicar layout do DeckScreen");
+assert.ok(log.includes("layout:15:template://controller_neptune_deckscreen_desktop.vdf"), "button forces the DeckScreen layout");
+layoutOf.delete("3000000001/15");
+stuck = true;                                  // Steam has not loaded the templates yet
+tree = await click("Aplicar layout do DeckScreen");
+assert.ok(text({ kids: tree }).includes("Reinicie a Steam"), "not-switched explained");
+tree = await click("Reiniciar a Steam");
+assert.ok(log.includes("restart-steam:false"), "restart Steam offered");
+stuck = false;
 await find(tree, "DropdownItem", "Perfil").props.onChange({ data: "custom" });
 tree = await render();
 find(tree, "TextField", "Janelas").props.onChange({ target: { value: "Secondary, Top Screen" } });

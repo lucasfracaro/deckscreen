@@ -532,7 +532,7 @@ class Plugin:
         s = _load()
         mode = s.get("layout", "auto")
         if mode == "steam" or s.get("motion") == "direct":     # direct = Steam Input off
-            return {"ok": True, "url": "", "kind": ""}
+            return {"ok": True, "url": "", "kind": "", "mode": mode}
         try:
             written = await asyncio.to_thread(layouts.install, decky.DECKY_USER_HOME)
         except OSError as e:
@@ -544,7 +544,7 @@ class Plugin:
             res = await self._authed("GET", "/api/status", timeout=3) if _active(s) else {}
             profile = (((res or {}).get("data") or {}).get("settings") or {}).get("profile", "desktop")
             kind = layouts.kind_for_profile(profile)
-        return {"ok": True, "url": layouts.url(kind), "kind": kind}
+        return {"ok": True, "url": layouts.url(kind), "kind": kind, "mode": mode}
 
     # ---------------- motion (DSU server)
     dsu_server = None

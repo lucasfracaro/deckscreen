@@ -103,32 +103,73 @@ function applyMotion(appId: number, motion: string) {
 }
 
 /** Index Steam gives the Deck's built-in controls (15 on a Deck, not 0), as its own layout picker uses. */
-function deckControllerIndex(): number | null {
+function deckControllerIndexes(): number[] {
   const store = (window as any).ControllerStore || {};
   const list: any[] = store.m_controllerList || [];
   const deck = list.find((c) => c.eControllerType === 4) || list[0];
-  const idx = deck ? deck.nControllerIndex : store.m_nLastValidActiveControllerIndex;
-  return typeof idx === "number" ? idx : null;
+  const first = deck ? deck.nControllerIndex : store.m_nLastValidActiveControllerIndex;
+  return [first, 15, 0].filter((v, i, a) => typeof v === "number" && a.indexOf(v) === i);
 }
+
+type LayoutState = { state: string; title?: string; url?: string; expected?: string; index?: number } | null;
+let layoutState: LayoutState = null;
+function setLayoutState(v: LayoutState) { layoutState = v; listeners.forEach((l) => l()); }
 
 /**
  * Select DeckScreen's layout (desktop or game) for the shortcut, the way Steam's picker does
- * (5 arguments; with 4 Steam silently selects nothing). A layout the user edited in Steam
- * (autosave/workshop) is never replaced.
+ * (5 arguments; with 4 Steam silently selects nothing), then read it back. In "auto" a layout
+ * the user edited in Steam (autosave/workshop) is kept unless `force`.
+ * States: ok | user | off | not_switched (Steam hasn't loaded the template: restart Steam) | no_controller.
  */
-async function applyLayout(appId: number): Promise<void> {
-  const r = await call<{ ok: boolean; url?: string; error?: string }>("controller_layout");
-  if (!r.ok || !r.url) return;
+async function applyLayout(appId: number, force = false): Promise<LayoutState> {
+  const r = await call<{ ok: boolean; url?: string; mode?: string; error?: string }>("controller_layout");
+  if (!r.ok) { setLayoutState({ state: "error", title: r.error }); return layoutState; }
+  if (!r.url) { setLayoutState({ state: "off" }); return layoutState; }
   const input = SteamClient.Input;
-  const idx = deckControllerIndex();
-  if (!input || idx === null) return;
+  if (!input) { setLayoutState({ state: "no_controller" }); return layoutState; }
   try {
-    const cur = await input.GetConfigForAppAndController(appId, idx);
-    const curUrl = String(cur?.URL || "");
-    if (curUrl === r.url) return;
-    if (curUrl && !curUrl.startsWith("template://")) return;   // the user's own layout
+    let idx: number | null = null;
+    let cur: any = null;
+    for (const i of deckControllerIndexes()) {
+      cur = await input.GetConfigForAppAndController(appId, i);
+      if (cur) { idx = i; break; }
+    }
+    if (idx === null) { setLayoutState({ state: "no_controller" }); return layoutState; }
+    const read = async () => {
+      const c = await input.GetConfigForAppAndController(appId, idx);
+      return { url: String(c?.URL || ""), title: String(c?.Title || "") };
+    };
+    let now = { url: String(cur?.URL || ""), title: String(cur?.Title || "") };
+    if (now.url === r.url) { setLayoutState({ state: "ok", index: idx, ...now }); return layoutState; }
+    const userOwned = now.url && !now.url.startsWith("template://");
+    if (userOwned && !force && r.mode === "auto") {
+      setLayoutState({ state: "user", index: idx, expected: r.url, ...now });
+      return layoutState;
+    }
     await input.SetSelectedConfigForApp(appId, idx, r.url, false, 1);
-  } catch { /* older client */ }
+    for (let i = 0; i < 12; i++) {
+      now = await read();
+      if (now.url === r.url) break;
+      await sleep(250);
+    }
+    setLayoutState({ state: now.url === r.url ? "ok" : "not_switched", index: idx, expected: r.url, ...now });
+  } catch (e) {
+    setLayoutState({ state: "error", title: String(e) });
+  }
+  return layoutState;
+}
+
+function describeLayout(l: LayoutState): { text: string; color?: string } | null {
+  if (!l) return null;
+  const name = l.title ? (l.title.startsWith("#") ? l.url?.split("/").pop() : l.title) : (l.url || "");
+  switch (l.state) {
+    case "ok": return { text: `Layout ativo: ${name}` };
+    case "user": return { text: `Você editou o layout na Steam (${name}); o DeckScreen não mexe nele. Toque em "Aplicar layout do DeckScreen" para trocar.` };
+    case "not_switched": return { color: "#ffb347", text: `A Steam ainda não carregou os layouts do DeckScreen (continua em: ${name || "padrão"}). Reinicie a Steam uma vez e conecte de novo.` };
+    case "no_controller": return { color: "#ffb347", text: "Não achei o controle do Deck na Steam para escolher o layout." };
+    case "error": return { color: "#ff6b6b", text: `Layout: ${l.title}` };
+    default: return null;
+  }
 }
 
 async function launchShortcut(appId: number, launchOptions: string): Promise<boolean> {
@@ -324,7 +365,8 @@ function Content() {
   const updateDeck = async (patch: any) => {
     const ns = await call<DeckSettings>("save_settings", patch);
     setS(ns);
-    if (("layout" in patch || "motion" in patch) && ns.shortcut_app_id) applyLayout(ns.shortcut_app_id);
+    if (("layout" in patch || "motion" in patch) && ns.shortcut_app_id)
+      await applyLayout(ns.shortcut_app_id, patch.layout === "desktop" || patch.layout === "game");
     if ("motion" in patch) {
       if (ns.shortcut_app_id) applyMotion(ns.shortcut_app_id, ns.motion);
       setMotion(ns.motion === "off" ? null : await call<MotionStatus>("motion_status"));
@@ -496,6 +538,15 @@ function Content() {
       h(Toggle, { label: "Toque = clique direto", desc: "Tocar na tela clica onde você tocou.", checked: s.absolute_touch, onChange: (v) => updateDeck({ absolute_touch: v }) }),
       h(Toggle, { label: "Som no PC", desc: "Desligado: o som sai no Deck.", checked: s.audio_on_host, onChange: (v) => updateDeck({ audio_on_host: v }) }),
       h(Drop, { label: "Controles", options: LAYOUT_OPTS, value: s.layout, onChange: (v) => updateDeck({ layout: v }) }),
+      (() => { const d = describeLayout(layoutState); return d && h(Row, null, h(Note, { color: d.color }, d.text)); })(),
+      s.layout !== "steam" && s.shortcut_app_id ? h(Btn, {
+        label: "Aplicar layout do DeckScreen", disabled: !!busy,
+        onClick: () => withBusy("layout", async () => { await applyLayout(s.shortcut_app_id, true); }),
+      }) : null,
+      layoutState?.state === "not_switched" && h(Btn, {
+        label: "Reiniciar a Steam", disabled: !!busy,
+        onClick: () => { try { SteamClient.User.StartRestart(false); } catch { toast("DeckScreen", "Reinicie a Steam pelo menu de energia."); } },
+      }),
       h(Drop, { label: "Giroscópio", options: MOTION_OPTS, value: s.motion, onChange: (v) => updateDeck({ motion: v }) }),
       motion && h(Row, null, h(Note, null, describeMotion(motion))),
       h(Toggle, { label: "Opções de vídeo", checked: showVideo, onChange: setShowVideo }),
