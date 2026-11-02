@@ -692,6 +692,6 @@ gdbus call --session --dest org.kde.KWin --object-path /Scripting \
 - **Tela vertical** depende de como a captura do KWin entrega uma saída rotacionada: pode chegar com tarja preta ou girada. Por isso está marcada como experimental.
 - **Giroscópio:** com o Steam Input desligado, o Moonlight (SDL) precisa enxergar o controle do Deck diretamente; isso varia com a versão do SteamOS e do Flatpak.
 - **Hyprland:** a sintaxe de regras de janela mudou entre versões. O código tenta `windowrulev2` e depois `windowrule`.
-- **GNOME/X11** não oferecem um monitor virtual que o Sunshine consiga capturar sem plugue fantasma, então ficam só no modo espelho.
+- **GNOME** sabe criar monitores virtuais: a API `org.gnome.Mutter.ScreenCast.RecordVirtual` existe desde o Mutter 40, e o modo "estender" do GNOME Remote Desktop usa essa API. O monitor, porém, só existe enquanto quem o criou mantém a sessão de captura aberta, e os quadros vão para esse processo pelo PipeWire. O Sunshine não sabe capturar um monitor criado por outro processo, então hoje o GNOME fica no modo espelho. Caminho para suportar: criar o monitor pelo DeckScreen e fazer o Sunshine capturá-lo pela captura `portal`, o que precisa de testes num GNOME real. **X11** fica só no espelho.
 - **Sunshine em Flatpak** não funciona com a captura `kwin` sem desativar uma proteção do KWin. O instalador prefere o pacote ou o AppImage.
 - **Uma sessão por vez:** a tela virtual é única (`DeckScreen`). Dois Decks ao mesmo tempo exigiriam nomes de output dinâmicos e `output_name` por sessão no Sunshine.

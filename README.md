@@ -31,7 +31,8 @@ Transforma o **Steam Deck** em **segunda tela + controle** do seu PC Linux, no e
 |---|---|---|
 | **KDE Plasma 6 (Wayland)**, ex.: CachyOS, Fedora KDE, Kubuntu | ✅ completo, com widget na bandeja | ✅ |
 | **Hyprland** | 🧪 experimental | ✅ |
-| GNOME, X11 e outras | ❌ (não permitem um monitor virtual utilizável) | ✅ |
+| **GNOME (Wayland)** | ❌ ainda não: o GNOME cria monitores virtuais, mas o DeckScreen ainda não liga isso ao Sunshine | ✅ |
+| X11 e outras | ❌ | ✅ |
 
 ## O atraso é alto?
 
