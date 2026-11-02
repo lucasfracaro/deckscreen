@@ -77,8 +77,9 @@ pub fn package_for(bin: &str, pm: Pm) -> &'static str {
         ("gdbus", Pm::Zypper) => "glib2-tools",
         ("gdbus", _) => "glib2",
         ("curl", _) => "curl",
-        ("ip", Pm::Apt) | ("ip", Pm::Zypper) => "iproute2",
         ("ip", _) => "iproute2",
+        ("python3", Pm::Pacman) => "python",
+        ("python3", _) => "python3",
         _ => "",
     }
 }
@@ -100,7 +101,31 @@ fn required_bins(d: Desktop) -> Vec<&'static str> {
     if d == Desktop::Kde {
         v.extend(["krfb-virtualmonitor", "kscreen-doctor", "gdbus"]);
     }
+    if d == Desktop::Gnome {
+        v.push("python3");
+    }
     v
+}
+
+/// PyGObject (used by the GNOME helper to talk to Mutter).
+pub fn has_pygobject() -> bool {
+    util::run(
+        "python3",
+        &[
+            "-c",
+            "import gi; gi.require_version('Gio', '2.0'); from gi.repository import Gio",
+        ],
+    )
+    .map(|o| o.status.success())
+    .unwrap_or(false)
+}
+
+fn pygobject_package(pm: Pm) -> &'static str {
+    match pm {
+        Pm::Pacman => "python-gobject",
+        Pm::Apt => "python3-gi",
+        _ => "python3-gobject",
+    }
 }
 
 // ------------------------------------------------------------------ Sunshine
@@ -112,13 +137,13 @@ fn arch() -> String {
 }
 
 fn download_sunshine_appimage() -> Result<String, String> {
-    let (ok, out) = util::run_text(
-        "curl",
-        &[
-            "-fsSL",
-            "https://api.github.com/repos/LizardByte/Sunshine/releases/latest",
-        ],
-    );
+    download_appimage_from("LizardByte/Sunshine", "Sunshine.AppImage")
+}
+
+/// Latest `*_<arch>.AppImage` of a GitHub repo's releases → ~/Applications/<dest_name>.
+fn download_appimage_from(repo: &str, dest_name: &str) -> Result<String, String> {
+    let api = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let (ok, out) = util::run_text("curl", &["-fsSL", &api]);
     if !ok {
         return Err(format!("não consegui consultar o GitHub: {}", out.trim()));
     }
@@ -132,10 +157,10 @@ fn download_sunshine_appimage() -> Result<String, String> {
                 .find(|x| x.str_at("name").ends_with(&want))
                 .map(|x| x.str_at("browser_download_url"))
         })
-        .ok_or_else(|| format!("a versão mais recente do Sunshine não tem AppImage para {}", arch()))?;
+        .ok_or_else(|| format!("a release mais recente de {repo} não tem AppImage para {}", arch()))?;
     let dir = util::home().join("Applications");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let dest = dir.join("Sunshine.AppImage");
+    let dest = dir.join(dest_name);
     println!("  baixando {url}");
     if !util::run_interactive("curl", &["-fL", "--progress-bar", "-o", &dest.to_string_lossy(), &url]) {
         return Err("download falhou".into());
@@ -177,6 +202,43 @@ fn ensure_sunshine(pm: Pm, yes: bool) -> Result<String, String> {
         warn("o '--install' do Sunshine não terminou bem; o controle virtual pode precisar de ajuste manual");
     }
     Ok(app)
+}
+
+/// GNOME: the DeckScreen build of Sunshine (portal_virtual_display) lets the
+/// Deck become an extra monitor. Returns true when it is installed.
+fn ensure_gnome_sunshine(cfg: &mut Config, yes: bool) -> bool {
+    let fork = util::home().join("Applications").join("Sunshine-DeckScreen.AppImage");
+    if cfg.portal_virtual() && fork.exists() {
+        ok("Sunshine do DeckScreen (monitor virtual no GNOME) já instalado");
+        return true;
+    }
+    println!("  No GNOME, para o Deck virar um monitor extra é preciso o Sunshine com a extensão do DeckScreen");
+    println!(
+        "  (fork {} com a opção portal_virtual_display). Sem ele, o Deck só espelha a tela.",
+        sunshine::FORK_REPO
+    );
+    if !ask_yes("Instalar o Sunshine do DeckScreen (AppImage)?", yes) {
+        cfg.set_portal_virtual(false);
+        return false;
+    }
+    match download_appimage_from(sunshine::FORK_REPO, "Sunshine-DeckScreen.AppImage") {
+        Ok(app) => {
+            println!("  Configurando o Sunshine do DeckScreen (pode pedir sua senha)…");
+            if !util::run_interactive(&app, &["--install"]) {
+                warn("o '--install' do Sunshine não terminou bem; o controle virtual pode precisar de ajuste manual");
+            }
+            cfg.set_portal_virtual(true);
+            ok(&format!("{app} (passa a ser o serviço do Sunshine do seu usuário)"));
+            true
+        }
+        Err(e) => {
+            warn(&format!(
+                "não consegui baixar o Sunshine do DeckScreen: {e}. Seguindo no modo espelhar."
+            ));
+            cfg.set_portal_virtual(false);
+            false
+        }
+    }
 }
 
 fn sunshine_username() -> String {
@@ -415,6 +477,13 @@ pub fn install(o: &Opts) -> i32 {
             warn(&format!("instale manualmente: {}", pkgs.join(" ")));
         }
     }
+    if desktop == Desktop::Gnome && display::is_wayland() && !has_pygobject() {
+        let pkg = pygobject_package(pm);
+        println!("  Faltando: {pkg} (o DeckScreen usa para posicionar o monitor no GNOME)");
+        if pm == Pm::Unknown || !ask_yes("Instalar agora? (pede sua senha)", o.yes) || !install_packages(pm, &[pkg]) {
+            warn(&format!("instale manualmente: {pkg}"));
+        }
+    }
     if util::which("curl").is_none() {
         return fail("curl é obrigatório.");
     }
@@ -426,6 +495,13 @@ pub fn install(o: &Opts) -> i32 {
         Err(e) => return fail(&e),
     };
 
+    let mut cfg = Config::load_default();
+    if desktop == Desktop::Gnome && display::is_wayland() {
+        say("Sunshine para o GNOME");
+        let on = ensure_gnome_sunshine(&mut cfg, o.yes);
+        display::set_gnome_virtual(on);
+    }
+
     say("Instalando o DeckScreen");
     let bin = match install_binary() {
         Ok(b) => b,
@@ -435,11 +511,10 @@ pub fn install(o: &Opts) -> i32 {
 
     say("Login da interface web do Sunshine (para aceitar o PIN do Deck sozinho)");
     let service = sunshine::service_name();
-    let mut cfg = Config::load_default();
     ensure_credentials(&mut cfg, &sun_bin, service.as_deref(), o.yes);
 
     say("Configurando o Sunshine");
-    match sunshine::configure(desktop, &bin_s) {
+    match sunshine::configure(desktop, &bin_s, cfg.settings().mode == "mirror") {
         Ok(notes) => notes.iter().for_each(|n| ok(n)),
         Err(e) => return fail(&format!("não consegui configurar o Sunshine: {e}")),
     }
@@ -522,6 +597,10 @@ pub fn install(o: &Opts) -> i32 {
             "Instalado, mas veja os itens marcados com ✘ acima."
         }
     );
+    if desktop == Desktop::Gnome && display::gnome_virtual() {
+        println!("  \x1b[1mGNOME, só na 1ª conexão:\x1b[0m aparece aqui no PC a janela \"Compartilhar tela\".");
+        println!("  Escolha \"Monitor virtual\", marque \"Lembrar\" e clique em Compartilhar. Depois é automático.\n");
+    }
     if !std::env::var("PATH")
         .unwrap_or_default()
         .split(':')

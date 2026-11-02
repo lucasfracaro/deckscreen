@@ -161,6 +161,9 @@ pub struct State {
     pub desktop: Desktop,
     nonces: Mutex<HashMap<String, u64>>,
     cache: Mutex<HashMap<String, (u64, Json)>>,
+    /// GNOME: Sunshine must switch between virtual-monitor and screen capture
+    /// (0 = nothing pending, 1 = mirror, 2 = virtual). Applied when not streaming.
+    pending_sunshine: std::sync::atomic::AtomicU8,
 }
 
 impl State {
@@ -180,6 +183,7 @@ impl State {
             desktop,
             nonces: Mutex::new(HashMap::new()),
             cache: Mutex::new(HashMap::new()),
+            pending_sunshine: std::sync::atomic::AtomicU8::new(0),
         })
     }
 
@@ -204,6 +208,7 @@ impl State {
                 "capability" => display::capability(desktop),
                 "wayland" => display::is_wayland(),
                 "krfb" => util::which("krfb-virtualmonitor").is_some(),
+                "gnome_virtual" => display::gnome_virtual(),
                 "kscreen" => util::which("kscreen-doctor").is_some(),
                 "sunshine_api" => sunshine::reachable(api.as_ref()),
             }
@@ -292,9 +297,54 @@ impl State {
 
     fn stop_screen(&self) -> Json {
         let close = self.cfg.lock().unwrap().settings().close_app;
-        let mut sc = self.screen.lock().unwrap();
-        sc.stop(close);
-        sc.status()
+        let status = {
+            let mut sc = self.screen.lock().unwrap();
+            sc.stop(close);
+            sc.status()
+        };
+        self.apply_pending_sunshine();
+        status
+    }
+
+    /// Settings changed. On GNOME, switching to/from "mirror" changes how Sunshine
+    /// captures (virtual monitor vs. real screen), which needs a Sunshine restart.
+    pub fn settings_changed(&self, old: &crate::config::Settings, new: &crate::config::Settings) {
+        let was = old.mode == "mirror";
+        let now = new.mode == "mirror";
+        if self.desktop != Desktop::Gnome || !display::gnome_virtual() || was == now {
+            return;
+        }
+        self.pending_sunshine
+            .store(if now { 1 } else { 2 }, std::sync::atomic::Ordering::SeqCst);
+        if !self.screen.lock().unwrap().active() {
+            self.apply_pending_sunshine();
+        } else {
+            crate::info!("GNOME: o Sunshine será reconfigurado quando a sessão atual terminar");
+        }
+    }
+
+    fn apply_pending_sunshine(&self) {
+        let p = self.pending_sunshine.swap(0, std::sync::atomic::Ordering::SeqCst);
+        if p == 0 {
+            return;
+        }
+        let desktop = self.desktop;
+        std::thread::spawn(move || {
+            let exe = std::env::current_exe()
+                .map(|e| e.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match sunshine::configure(desktop, &exe, p == 1) {
+                Ok(notes) => notes.iter().for_each(|n| crate::info!("{n}")),
+                Err(e) => crate::warn!("não reconfigurei o Sunshine: {e}"),
+            }
+            if let Some(s) = sunshine::service_name() {
+                util::run("systemctl", &["--user", "restart", &s]);
+                crate::info!(
+                    "Sunshine reiniciado ({})",
+                    if p == 1 { "espelhar" } else { "monitor virtual" }
+                );
+            }
+        });
     }
 
     fn pending_json(&self) -> Json {
@@ -355,7 +405,15 @@ pub fn lan_handler(st: Arc<State>) -> Handler {
                     ("GET", "/api/status") => Response::json(200, &st.status_json(Some(&r.peer_ip()))),
                     ("GET", "/api/settings") => Response::json(200, &st.cfg.lock().unwrap().settings().to_json()),
                     ("PUT", "/api/settings") | ("POST", "/api/settings") => match r.json() {
-                        Ok(b) => Response::json(200, &st.cfg.lock().unwrap().update_settings(&b).to_json()),
+                        Ok(b) => {
+                            let (old, new) = {
+                                let mut c = st.cfg.lock().unwrap();
+                                let old = c.settings();
+                                (old, c.update_settings(&b))
+                            };
+                            st.settings_changed(&old, &new);
+                            Response::json(200, &new.to_json())
+                        }
                         Err(e) => Response::error(400, &e),
                     },
                     ("POST", "/api/stop") => {

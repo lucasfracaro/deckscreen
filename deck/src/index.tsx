@@ -345,7 +345,11 @@ function Content() {
 
   const warnings: string[] = [];
   if (st) {
-    if (capability === "mirror") warnings.push(`Este PC (${st.desktop}) só espelha a tela: para virar monitor extra use KDE Plasma Wayland ou Hyprland.`);
+    if (capability === "mirror") {
+      warnings.push(st.desktop === "gnome"
+        ? "Este PC (GNOME) só espelha: para o Deck virar monitor extra, rode 'deckscreen-host install' no PC e aceite instalar o Sunshine do DeckScreen."
+        : `Este PC (${st.desktop}) só espelha a tela: para virar monitor extra use KDE Plasma Wayland, GNOME ou Hyprland.`);
+    }
     if (st.diagnostics.desktop === "kde" && !st.diagnostics.krfb) warnings.push("PC sem o pacote krfb (tela virtual).");
     if (!st.diagnostics.sunshine_api) warnings.push("O DeckScreen do PC não acessa o Sunshine (parado ou senha errada: rode 'deckscreen-host install').");
     if (st.display.last_error) warnings.push(st.display.last_error);
@@ -385,12 +389,16 @@ function Content() {
       hs.mode === "extend" && h(Drop, { label: "Posição do Deck", options: POS_OPTS, value: hs.position, onChange: (v) => updateHost({ position: v }) }),
       hs.mode !== "mirror" && h(Drop, { label: "Escala", options: SCALE_OPTS, value: hs.scale, onChange: (v) => updateHost({ scale: v }) }),
       h(Drop, { label: "Orientação", options: ORIENT_OPTS, value: hs.orientation, onChange: (v) => updateHost({ orientation: v }) }),
-      h(Row, null, h(Note, null, "Mudanças valem na próxima conexão."))),
+      h(Row, null, h(Note, null, st?.desktop === "gnome"
+        ? "Mudanças valem na próxima conexão. No GNOME, trocar de/para Espelhar reinicia o Sunshine no PC. Na 1ª conexão, aceite no PC o \"Compartilhar tela\" escolhendo \"Monitor virtual\" e marcando \"Lembrar\"."
+        : "Mudanças valem na próxima conexão."))),
 
     hs && h(PanelSection, { title: "Perfil" },
       h(Drop, { label: "Perfil", options: PROFILE_OPTS, value: hs.profile, onChange: (v) => updateHost({ profile: v }) }),
       hs.profile === "cemu" && h(Row, null, h(Note, null,
         "Modo Wii U: a janela “GamePad View” do Cemu vai para o Deck em tela cheia. No Cemu, ative Options → Separate GamePad view.")),
+      hs.profile !== "desktop" && st?.desktop === "gnome" && h(Row, null, h(Note, { color: "#ffb84d" },
+        "No GNOME as janelas não podem ser movidas automaticamente: leve a janela para o Deck com Super+Shift+→ (ou arraste).")),
       hs.profile !== "desktop" && h(Toggle, { label: "Abrir o app ao conectar", checked: hs.open_app, onChange: (v) => updateHost({ open_app: v }) }),
       hs.profile !== "desktop" && h(Toggle, { label: "Fechar o app ao desconectar", checked: hs.close_app, onChange: (v) => updateHost({ close_app: v }) }),
       hs.profile === "custom" && h(Fragment, null,

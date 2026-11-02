@@ -83,11 +83,24 @@ pub fn detect_desktop() -> Desktop {
     Desktop::Other
 }
 
+static GNOME_VIRTUAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// GNOME can only extend the desktop with the DeckScreen build of Sunshine
+/// (portal_virtual_display). Set from config.json ("sunshine.portal_virtual").
+pub fn set_gnome_virtual(on: bool) {
+    GNOME_VIRTUAL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn gnome_virtual() -> bool {
+    GNOME_VIRTUAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// "virtual" when the Deck can be a real extra monitor, otherwise "mirror".
 pub fn capability(d: Desktop) -> &'static str {
     match d {
         Desktop::Kde if is_wayland() => "virtual",
         Desktop::Hyprland => "virtual",
+        Desktop::Gnome if is_wayland() && gnome_virtual() => "virtual",
         _ => "mirror",
     }
 }
@@ -112,9 +125,10 @@ pub trait Backend: Send {
 }
 
 pub fn backend_for(d: Desktop) -> Box<dyn Backend> {
-    match capability(d) {
-        "virtual" if d == Desktop::Kde => Box::new(KdeBackend::new(Box::new(RealKScreen))),
-        "virtual" => Box::new(HyprBackend::default()),
+    match (capability(d), d) {
+        ("virtual", Desktop::Kde) => Box::new(KdeBackend::new(Box::new(RealKScreen))),
+        ("virtual", Desktop::Gnome) => Box::new(GnomeBackend::new(std::sync::Arc::new(RealMutter))),
+        ("virtual", _) => Box::new(HyprBackend::default()),
         _ => Box::new(MirrorBackend),
     }
 }
@@ -776,6 +790,390 @@ impl Backend for HyprBackend {
     }
 }
 
+// ============================================================================ GNOME (Mutter)
+//
+// The virtual monitor is created by GNOME itself when Sunshine (DeckScreen build,
+// `portal_virtual_display = enabled`) starts capturing — i.e. right *after* our
+// hook. So `start` only snapshots the layout and a watcher waits for the new
+// monitor ("Meta-N") to appear, then places it through Mutter's DisplayConfig.
+
+const GNOME_HELPER: &str = include_str!("../assets/gnome-display.py");
+
+pub trait Mutter: Send + Sync {
+    fn state(&self) -> Result<Json, String>;
+    fn apply(&self, cfg: &Json) -> Result<(), String>;
+}
+
+pub struct RealMutter;
+
+impl RealMutter {
+    fn helper() -> Result<String, String> {
+        let path = util::data_dir().join("gnome-display.py");
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(GNOME_HELPER) {
+            util::write_file(&path, GNOME_HELPER, 0o755).map_err(|e| e.to_string())?;
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+impl Mutter for RealMutter {
+    fn state(&self) -> Result<Json, String> {
+        let h = Self::helper()?;
+        let (ok, out) = util::run_text("python3", &[&h, "state"]);
+        let j = Json::parse(out.trim()).map_err(|_| format!("ajudante do GNOME falhou: {}", out.trim()))?;
+        if !ok || j.get("error").is_some() {
+            return Err(format!("GNOME DisplayConfig: {}", j.str_at("error")));
+        }
+        Ok(j)
+    }
+
+    fn apply(&self, cfg: &Json) -> Result<(), String> {
+        use std::io::Write;
+        let h = Self::helper()?;
+        let mut child = Command::new("python3")
+            .args([h.as_str(), "apply"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(cfg.to_compact().as_bytes())
+            .map_err(|e| e.to_string())?;
+        let o = child.wait_with_output().map_err(|e| e.to_string())?;
+        let out = String::from_utf8_lossy(&o.stdout).to_string() + &String::from_utf8_lossy(&o.stderr);
+        if o.status.success() {
+            Ok(())
+        } else {
+            Err(format!("GNOME recusou a configuração de monitores: {}", out.trim()))
+        }
+    }
+}
+
+/// Mode (id, width, height, scales) for a connector in a Mutter state.
+fn gnome_mode(state: &Json, connector: &str, mode_id: Option<&str>) -> Option<(String, i64, i64, Vec<f64>)> {
+    let m = state
+        .get("monitors")?
+        .as_arr()?
+        .iter()
+        .find(|m| m.str_at("connector") == connector)?;
+    let modes = m.get("modes")?.as_arr()?;
+    let want = mode_id
+        .map(str::to_string)
+        .or_else(|| Some(m.str_at("current_mode")).filter(|s| !s.is_empty()))
+        .or_else(|| Some(m.str_at("preferred_mode")).filter(|s| !s.is_empty()));
+    let mode = want
+        .and_then(|w| modes.iter().find(|x| x.str_at("id") == w))
+        .or_else(|| modes.first())?;
+    let scales = mode
+        .get("scales")
+        .and_then(|s| s.as_arr())
+        .map(|a| a.iter().filter_map(|x| x.as_f64()).collect())
+        .unwrap_or_default();
+    Some((
+        mode.str_at("id"),
+        mode.i64_at("width", 0),
+        mode.i64_at("height", 0),
+        scales,
+    ))
+}
+
+fn gnome_size(state: &Json, w: i64, h: i64, scale: f64, transform: i64) -> (i64, i64) {
+    let logical = state.i64_at("layout_mode", 1) == 1;
+    let (mut lw, mut lh) = if logical && scale > 0.0 {
+        ((w as f64 / scale).round() as i64, (h as f64 / scale).round() as i64)
+    } else {
+        (w, h)
+    };
+    if transform % 2 == 1 {
+        std::mem::swap(&mut lw, &mut lh);
+    }
+    (lw, lh)
+}
+
+fn nearest_scale(scales: &[f64], want: f64) -> f64 {
+    scales
+        .iter()
+        .copied()
+        .min_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()))
+        .unwrap_or(1.0)
+}
+
+/// The virtual monitor GNOME created for the Deck (not in the snapshot).
+pub fn gnome_find_virtual(state: &Json, before: &Json) -> Option<String> {
+    let known: Vec<String> = before
+        .get("monitors")
+        .and_then(|m| m.as_arr())
+        .map(|a| a.iter().map(|m| m.str_at("connector")).collect())
+        .unwrap_or_default();
+    state.get("monitors")?.as_arr()?.iter().find_map(|m| {
+        let c = m.str_at("connector");
+        let is_virtual = c.starts_with("Meta-") || m.str_at("vendor") == "MetaVendor";
+        (is_virtual && !known.contains(&c)).then_some(c)
+    })
+}
+
+fn lm(x: i64, y: i64, scale: f64, transform: i64, primary: bool, monitors: Vec<(String, String)>) -> Json {
+    crate::obj! {
+        "x" => x, "y" => y, "scale" => scale, "transform" => transform, "primary" => primary,
+        "monitors" => Json::Arr(monitors.into_iter().map(|(c, m)| crate::obj! {"connector" => c, "mode" => m}).collect()),
+    }
+}
+
+/// Mutter layout with the Deck's monitor placed per the settings.
+pub fn gnome_plan(state: &Json, vconn: &str, s: &Settings) -> Result<Json, String> {
+    let (vmode, vw_px, vh_px, vscales) = gnome_mode(state, vconn, None).ok_or("monitor virtual sem modo")?;
+    let vscale = nearest_scale(&vscales, s.scale);
+    let vtransform = match s.orientation.as_str() {
+        "portrait" => 1,
+        "portrait_flipped" => 3,
+        _ => 0,
+    };
+    let (vw, vh) = gnome_size(state, vw_px, vh_px, vscale, vtransform);
+    if s.mode == "deck_only" {
+        let one = lm(0, 0, vscale, vtransform, true, vec![(vconn.to_string(), vmode)]);
+        return Ok(crate::obj! {"logical" => vec![one]});
+    }
+    // physical logical monitors as they are now (+ their logical sizes)
+    let mut phys: Vec<(Json, i64, i64)> = vec![];
+    for l in state
+        .get("logical")
+        .and_then(|l| l.as_arr())
+        .cloned()
+        .unwrap_or_default()
+    {
+        let mons: Vec<String> = l
+            .get("monitors")
+            .and_then(|m| m.as_arr())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        if mons.iter().any(|c| c == vconn) || mons.is_empty() {
+            continue;
+        }
+        let modes: Vec<(String, String)> = mons
+            .iter()
+            .filter_map(|c| gnome_mode(state, c, None).map(|m| (c.clone(), m.0)))
+            .collect();
+        let (_, w, h, _) = gnome_mode(state, &mons[0], None).ok_or("monitor sem modo")?;
+        let scale = l.f64_at("scale", 1.0);
+        let tr = l.i64_at("transform", 0);
+        let (lw, lh) = gnome_size(state, w, h, scale, tr);
+        phys.push((
+            lm(
+                l.i64_at("x", 0),
+                l.i64_at("y", 0),
+                scale,
+                tr,
+                l.bool_at("primary", false),
+                modes,
+            ),
+            lw,
+            lh,
+        ));
+    }
+    if phys.is_empty() {
+        let one = lm(0, 0, vscale, vtransform, true, vec![(vconn.to_string(), vmode)]);
+        return Ok(crate::obj! {"logical" => vec![one]});
+    }
+    // anchor on the outermost monitor of the requested side (keeps the layout adjacent)
+    let pick = |f: &dyn Fn(&(Json, i64, i64)) -> i64, max: bool| -> (i64, i64, i64, i64) {
+        let it = phys.iter();
+        let a = if max {
+            it.max_by_key(|p| f(p))
+        } else {
+            it.min_by_key(|p| f(p))
+        }
+        .unwrap();
+        (a.0.i64_at("x", 0), a.0.i64_at("y", 0), a.1, a.2)
+    };
+    let (vx, vy) = match s.position.as_str() {
+        "left" => {
+            let (x, y, _, _) = pick(&|p| p.0.i64_at("x", 0), false);
+            (x - vw, y)
+        }
+        "above" => {
+            let (x, y, _, _) = pick(&|p| p.0.i64_at("y", 0), false);
+            (x, y - vh)
+        }
+        "below" => {
+            let (x, y, _, h) = pick(&|p| p.0.i64_at("y", 0) + p.2, true);
+            (x, y + h)
+        }
+        _ => {
+            let (x, y, w, _) = pick(&|p| p.0.i64_at("x", 0) + p.1, true);
+            (x + w, y)
+        }
+    };
+    let mut all: Vec<Json> = phys.into_iter().map(|p| p.0).collect();
+    all.push(lm(vx, vy, vscale, vtransform, false, vec![(vconn.to_string(), vmode)]));
+    let dx = -all.iter().map(|l| l.i64_at("x", 0)).min().unwrap_or(0).min(0);
+    let dy = -all.iter().map(|l| l.i64_at("y", 0)).min().unwrap_or(0).min(0);
+    for l in all.iter_mut() {
+        let (x, y) = (l.i64_at("x", 0), l.i64_at("y", 0));
+        l.set("x", x + dx);
+        l.set("y", y + dy);
+    }
+    Ok(crate::obj! {"logical" => all})
+}
+
+/// Layout from a snapshot, keeping only monitors that still exist.
+pub fn gnome_restore_plan(snapshot: &Json, now: &Json) -> Option<Json> {
+    let present: Vec<String> = now
+        .get("monitors")?
+        .as_arr()?
+        .iter()
+        .map(|m| m.str_at("connector"))
+        .collect();
+    let mut out = vec![];
+    for l in snapshot.get("logical")?.as_arr()? {
+        let mons: Vec<(String, String)> = l
+            .get("monitors")
+            .and_then(|m| m.as_arr())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| present.contains(c) && !c.starts_with("Meta-"))
+            .filter_map(|c| gnome_mode(snapshot, &c, None).map(|m| (c, m.0)))
+            .collect();
+        if mons.is_empty() {
+            continue;
+        }
+        out.push(lm(
+            l.i64_at("x", 0),
+            l.i64_at("y", 0),
+            l.f64_at("scale", 1.0),
+            l.i64_at("transform", 0),
+            l.bool_at("primary", false),
+            mons,
+        ));
+    }
+    if out.is_empty() {
+        return None;
+    }
+    if !out.iter().any(|l| l.bool_at("primary", false)) {
+        out[0].set("primary", true);
+    }
+    Some(crate::obj! {"logical" => out})
+}
+
+pub struct GnomeBackend {
+    mutter: std::sync::Arc<dyn Mutter>,
+    snapshot: Option<Json>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    watcher: Option<std::thread::JoinHandle<()>>,
+    pub poll_ms: u64,
+    pub wait_secs: u64,
+}
+
+impl GnomeBackend {
+    pub fn new(mutter: std::sync::Arc<dyn Mutter>) -> Self {
+        GnomeBackend {
+            mutter,
+            snapshot: None,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            watcher: None,
+            poll_ms: 500,
+            wait_secs: 60,
+        }
+    }
+
+    fn restore(&mut self) {
+        let Some(snap) = self.snapshot.take() else { return };
+        match self.mutter.state() {
+            Ok(now) => {
+                if let Some(cfg) = gnome_restore_plan(&snap, &now) {
+                    match self.mutter.apply(&cfg) {
+                        Ok(()) => crate::info!("GNOME: monitores restaurados"),
+                        Err(e) => crate::warn!("{e}"),
+                    }
+                }
+            }
+            Err(e) => crate::warn!("{e}"),
+        }
+        let _ = std::fs::remove_file(restore_file());
+    }
+}
+
+impl Backend for GnomeBackend {
+    fn name(&self) -> &'static str {
+        "gnome"
+    }
+
+    fn start(&mut self, _req: &StartReq, s: &Settings, p: &Profile) -> Result<String, String> {
+        self.stop();
+        if s.mode == "mirror" {
+            return Ok(String::new());
+        }
+        let snap = self.mutter.state()?;
+        let _ = util::write_file(
+            &restore_file(),
+            &crate::obj! {"gnome" => snap.clone()}.to_compact(),
+            0o600,
+        );
+        self.snapshot = Some(snap.clone());
+        if !p.rules.is_empty() {
+            crate::warn!("GNOME não permite mover janelas por programa: arraste-a para o Deck (Super+Shift+→)");
+        }
+        self.cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (cancel, mutter, settings) = (self.cancel.clone(), self.mutter.clone(), s.clone());
+        let (poll, tries) = (self.poll_ms, (self.wait_secs * 1000 / self.poll_ms.max(1)).max(1));
+        self.watcher = Some(std::thread::spawn(move || {
+            for _ in 0..tries {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                if let Ok(now) = mutter.state() {
+                    if let Some(v) = gnome_find_virtual(&now, &snap) {
+                        crate::info!("GNOME criou o monitor do Deck: {v}");
+                        match gnome_plan(&now, &v, &settings).and_then(|cfg| mutter.apply(&cfg)) {
+                            Ok(()) => crate::info!(
+                                "GNOME: monitor do Deck posicionado ({} / {})",
+                                settings.mode,
+                                settings.position
+                            ),
+                            Err(e) => crate::warn!("{e}"),
+                        }
+                        return;
+                    }
+                }
+                util::sleep_ms(poll);
+            }
+            crate::warn!("GNOME: o monitor virtual não apareceu. O Sunshine é a versão DeckScreen com portal_virtual_display = enabled? Na 1ª vez é preciso aceitar o compartilhamento de tela no PC.");
+        }));
+        Ok("Meta (criado pelo GNOME)".into())
+    }
+
+    fn stop(&mut self) {
+        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(w) = self.watcher.take() {
+            let _ = w.join();
+        }
+        self.restore();
+    }
+
+    fn alive(&mut self) -> bool {
+        true
+    }
+
+    fn recover(&mut self) {
+        let Ok(text) = std::fs::read_to_string(restore_file()) else {
+            return;
+        };
+        if let Some(snap) = Json::parse(&text).ok().and_then(|j| j.get("gnome").cloned()) {
+            crate::warn!("a última sessão no GNOME não terminou direito; restaurando os monitores");
+            self.snapshot = Some(snap);
+            self.restore();
+        }
+    }
+}
+
 // ============================================================================ mirror only
 
 pub struct MirrorBackend;
@@ -991,6 +1389,163 @@ pub mod tests {
             .unwrap_err();
         assert!(e.contains("não apareceu"));
         assert!(ks.outs.lock().unwrap().iter().all(|o| o.bool_at("enabled", false)));
+    }
+
+    // ---------------------------------------------------------------- GNOME
+
+    fn gmon(conn: &str, vendor: &str, w: i64, h: i64, scales: &str) -> String {
+        format!(
+            r#"{{"connector":"{conn}","vendor":"{vendor}","product":"p","serial":"s","current_mode":"{w}x{h}@60",
+            "preferred_mode":"{w}x{h}@60","modes":[{{"id":"{w}x{h}@60","width":{w},"height":{h},"refresh":60,
+            "preferred_scale":1,"scales":[{scales}]}}]}}"#
+        )
+    }
+
+    pub fn gstate(with_virtual: bool) -> Json {
+        let mut mons = vec![
+            gmon("DP-1", "DEL", 2560, 1440, "1,1.25,1.5,2"),
+            gmon("HDMI-1", "SAM", 1920, 1080, "1,2"),
+        ];
+        let mut lms = vec![
+            r#"{"x":0,"y":0,"scale":1.25,"transform":0,"primary":true,"monitors":["DP-1"]}"#.to_string(),
+            r#"{"x":2048,"y":0,"scale":1,"transform":0,"primary":false,"monitors":["HDMI-1"]}"#.to_string(),
+        ];
+        if with_virtual {
+            mons.push(gmon("Meta-0", "MetaVendor", 1280, 800, "1,1.25,1.5,2"));
+            lms.push(r#"{"x":3968,"y":0,"scale":1,"transform":0,"primary":false,"monitors":["Meta-0"]}"#.to_string());
+        }
+        Json::parse(&format!(
+            r#"{{"serial":7,"layout_mode":1,"monitors":[{}],"logical":[{}]}}"#,
+            mons.join(","),
+            lms.join(",")
+        ))
+        .unwrap()
+    }
+
+    fn find_lm<'a>(cfg: &'a Json, conn: &str) -> &'a Json {
+        cfg.get("logical")
+            .unwrap()
+            .as_arr()
+            .unwrap()
+            .iter()
+            .find(|l| l.get("monitors").unwrap().as_arr().unwrap()[0].str_at("connector") == conn)
+            .unwrap()
+    }
+
+    #[test]
+    fn gnome_plans() {
+        let st = gstate(true);
+        assert_eq!(gnome_find_virtual(&st, &gstate(false)).as_deref(), Some("Meta-0"));
+        assert_eq!(gnome_find_virtual(&st, &st), None);
+
+        let mut s = settings("extend");
+        s.scale = 1.3; // nearest supported: 1.25
+        let cfg = gnome_plan(&st, "Meta-0", &s).unwrap();
+        let v = find_lm(&cfg, "Meta-0");
+        assert_eq!(
+            (v.i64_at("x", -1), v.i64_at("y", -1), v.f64_at("scale", 0.0)),
+            (3968, 0, 1.25)
+        );
+        assert!(find_lm(&cfg, "DP-1").bool_at("primary", false), "primary kept");
+        assert_eq!(
+            find_lm(&cfg, "DP-1").get("monitors").unwrap().as_arr().unwrap()[0].str_at("mode"),
+            "2560x1440@60"
+        );
+
+        s.scale = 1.0;
+        s.position = "left".into();
+        s.orientation = "portrait".into();
+        let cfg = gnome_plan(&st, "Meta-0", &s).unwrap();
+        let v = find_lm(&cfg, "Meta-0");
+        assert_eq!((v.i64_at("x", -1), v.i64_at("transform", -1)), (0, 1));
+        assert_eq!(
+            find_lm(&cfg, "DP-1").i64_at("x", -1),
+            800,
+            "others shifted by the rotated width"
+        );
+
+        s.position = "below".into();
+        s.orientation = "landscape".into();
+        let cfg = gnome_plan(&st, "Meta-0", &s).unwrap();
+        assert_eq!(
+            (
+                find_lm(&cfg, "Meta-0").i64_at("x", -1),
+                find_lm(&cfg, "Meta-0").i64_at("y", -1)
+            ),
+            (0, 1152)
+        );
+
+        let cfg = gnome_plan(&st, "Meta-0", &settings("deck_only")).unwrap();
+        let only = cfg.get("logical").unwrap().as_arr().unwrap();
+        assert_eq!(only.len(), 1);
+        assert!(only[0].bool_at("primary", false));
+
+        let back = gnome_restore_plan(&gstate(false), &st).unwrap();
+        let l = back.get("logical").unwrap().as_arr().unwrap();
+        assert_eq!(l.len(), 2);
+        assert!(!back.to_compact().contains("Meta-0"));
+    }
+
+    struct FakeMutter {
+        virtual_now: std::sync::Mutex<bool>,
+        applied: std::sync::Mutex<Vec<Json>>,
+    }
+    impl Mutter for FakeMutter {
+        fn state(&self) -> Result<Json, String> {
+            Ok(gstate(*self.virtual_now.lock().unwrap()))
+        }
+        fn apply(&self, cfg: &Json) -> Result<(), String> {
+            self.applied.lock().unwrap().push(cfg.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn gnome_backend_waits_places_and_restores() {
+        util::test_env();
+        let m = std::sync::Arc::new(FakeMutter {
+            virtual_now: std::sync::Mutex::new(false),
+            applied: std::sync::Mutex::new(vec![]),
+        });
+        let mut b = GnomeBackend::new(m.clone());
+        b.poll_ms = 5;
+        b.wait_secs = 5;
+        b.start(&req(), &settings("deck_only"), &Profile::default()).unwrap();
+        util::sleep_ms(30);
+        assert!(
+            m.applied.lock().unwrap().is_empty(),
+            "waits for GNOME to create the monitor"
+        );
+        *m.virtual_now.lock().unwrap() = true; // Sunshine started capturing
+        for _ in 0..100 {
+            if !m.applied.lock().unwrap().is_empty() {
+                break;
+            }
+            util::sleep_ms(10);
+        }
+        assert_eq!(
+            m.applied.lock().unwrap()[0]
+                .get("logical")
+                .unwrap()
+                .as_arr()
+                .unwrap()
+                .len(),
+            1,
+            "deck only"
+        );
+        b.stop();
+        let last = m.applied.lock().unwrap().last().cloned().unwrap();
+        assert_eq!(
+            last.get("logical").unwrap().as_arr().unwrap().len(),
+            2,
+            "physical monitors restored"
+        );
+
+        // mirror: nothing to do on GNOME
+        let n = m.applied.lock().unwrap().len();
+        assert_eq!(b.start(&req(), &settings("mirror"), &Profile::default()).unwrap(), "");
+        b.stop();
+        assert_eq!(m.applied.lock().unwrap().len(), n);
     }
 
     #[test]

@@ -252,11 +252,24 @@ pub fn conf_get(text: &str, key: &str) -> Option<String> {
         .map(|(_, v)| v.trim().to_string())
 }
 
+/// Fork of Sunshine with `portal_virtual_display` (needed on GNOME).
+pub const FORK_REPO: &str = "lucasfracaro/Sunshine";
+
 /// Capture method / output name per desktop.
-pub fn conf_values(d: Desktop) -> Vec<(&'static str, Option<&'static str>)> {
+/// GNOME + DeckScreen build of Sunshine: portal capture of a virtual monitor
+/// (or of the real screen when mirroring).
+pub fn conf_values(d: Desktop, gnome_virtual: bool, mirror: bool) -> Vec<(&'static str, Option<&'static str>)> {
     match d {
         Desktop::Kde => vec![("capture", Some("kwin")), ("output_name", Some(KDE_OUTPUT))],
         Desktop::Hyprland => vec![("capture", Some("wlr")), ("output_name", Some(HYPR_OUTPUT))],
+        Desktop::Gnome if gnome_virtual => vec![
+            ("capture", Some("portal")),
+            (
+                "portal_virtual_display",
+                Some(if mirror { "disabled" } else { "enabled" }),
+            ),
+            ("output_name", None),
+        ],
         // mirror only: don't touch the capture method, just drop our output name
         _ => vec![],
     }
@@ -294,7 +307,7 @@ pub fn merge_apps(data: Option<Json>, exe: &str) -> Json {
 }
 
 /// Wire Sunshine for this desktop. Writes backups first.
-pub fn configure(d: Desktop, exe: &str) -> Result<Vec<String>, String> {
+pub fn configure(d: Desktop, exe: &str, mirror: bool) -> Result<Vec<String>, String> {
     let dir = util::sunshine_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = util::now_secs();
@@ -305,7 +318,8 @@ pub fn configure(d: Desktop, exe: &str) -> Result<Vec<String>, String> {
     if !old.is_empty() {
         let _ = std::fs::copy(&conf, dir.join(format!("sunshine.conf.deckscreen-bak.{stamp}")));
     }
-    let mut values = conf_values(d);
+    let gnome_virtual = crate::display::gnome_virtual();
+    let mut values = conf_values(d, gnome_virtual, mirror);
     // remove an output_name we set for another desktop earlier
     if values.is_empty() {
         if let Some(v) = conf_get(&old, "output_name") {
@@ -318,6 +332,10 @@ pub fn configure(d: Desktop, exe: &str) -> Result<Vec<String>, String> {
     notes.push(match d {
         Desktop::Kde => format!("sunshine.conf: capture = kwin, output_name = {KDE_OUTPUT}"),
         Desktop::Hyprland => format!("sunshine.conf: capture = wlr, output_name = {HYPR_OUTPUT}"),
+        Desktop::Gnome if gnome_virtual => format!(
+            "sunshine.conf: capture = portal, portal_virtual_display = {}",
+            if mirror { "disabled" } else { "enabled" }
+        ),
         _ => "sunshine.conf: captura mantida (modo espelhar)".to_string(),
     });
 
@@ -335,6 +353,8 @@ pub fn unconfigure() {
     let dir = util::sunshine_dir();
     let conf = dir.join("sunshine.conf");
     if let Ok(old) = std::fs::read_to_string(&conf) {
+        let old = merge_conf(&old, &[("portal_virtual_display", None)]);
+        let _ = std::fs::write(&conf, &old);
         if matches!(
             conf_get(&old, "output_name").as_deref(),
             Some(KDE_OUTPUT) | Some(HYPR_OUTPUT)
@@ -375,6 +395,18 @@ mod tests {
         assert_eq!(conf_get(&new, "output_name").as_deref(), Some(KDE_OUTPUT));
         let removed = merge_conf(&new, &[("output_name", None)]);
         assert!(conf_get(&removed, "output_name").is_none());
+    }
+
+    #[test]
+    fn gnome_conf() {
+        assert!(conf_values(Desktop::Gnome, false, false).is_empty());
+        let v = conf_values(Desktop::Gnome, true, false);
+        let new = merge_conf("capture = kms\noutput_name = Virtual-DeckScreen\n", &v);
+        assert_eq!(conf_get(&new, "capture").as_deref(), Some("portal"));
+        assert_eq!(conf_get(&new, "portal_virtual_display").as_deref(), Some("enabled"));
+        assert!(conf_get(&new, "output_name").is_none());
+        let m = merge_conf(&new, &conf_values(Desktop::Gnome, true, true));
+        assert_eq!(conf_get(&m, "portal_virtual_display").as_deref(), Some("disabled"));
     }
 
     #[test]

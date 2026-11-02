@@ -75,7 +75,7 @@ deckscreen/
 │   ├── src/
 │   │   ├── main.rs               CLI: interpreta os comandos e chama os módulos
 │   │   ├── daemon.rs             serviço: rotas HTTP, sessão da tela, watchdog, busca UDP
-│   │   ├── display.rs            detecção da área de trabalho + backends KDE/Hyprland/espelho
+│   │   ├── display.rs            detecção da área de trabalho + backends KDE/GNOME/Hyprland/espelho
 │   │   ├── pairing.rs            pedidos de pareamento, notificação, aprovação
 │   │   ├── sunshine.rs           API do Sunshine (via curl), sunshine.conf e apps.json
 │   │   ├── config.rs             config.json, configurações (Settings) e perfis
@@ -90,6 +90,7 @@ deckscreen/
 │       ├── deckscreen-host.service      unidade systemd (@BIN@ é substituído)
 │       ├── sunshine-wait-kwin.conf      drop-in: Sunshine espera o KWin subir
 │       ├── deckscreen-stop.desktop      atalho "desconectar" no menu
+│       ├── gnome-display.py             ajudante do GNOME (Mutter DisplayConfig via PyGObject)
 │       ├── deckscreen.svg / .png        ícone
 │       └── plasmoid/                    widget da bandeja do Plasma 6 (QML)
 ├── deck/                         plugin do Decky Loader
@@ -314,6 +315,8 @@ pub trait Backend: Send {
 }
 ```
 
+`capability()` no GNOME só devolve `virtual` se o Sunshine do DeckScreen estiver instalado. O instalador grava `sunshine.portal_virtual = true` no `config.json`, e o `main()` lê esse valor com `peek_portal_virtual()` e chama `display::set_gnome_virtual()`.
+
 `detect_desktop()` decide nesta ordem:
 1. `HYPRLAND_INSTANCE_SIGNATURE` + `hyprctl` → Hyprland;
 2. `XDG_CURRENT_DESKTOP` contém kde, hyprland ou gnome;
@@ -374,6 +377,22 @@ As strings vão para o script serializadas como JSON, o que evita injeção. O a
 - **stop:** `output remove` + `hyprctl reload`, que restaura as regras de monitor e de janela do usuário.
 - No Sunshine: `capture = wlr` e `output_name = DeckScreen`. O `wlgrab` do Sunshine casa o monitor pelo nome do `xdg_output`.
 
+#### GNOME (`GnomeBackend`, experimental)
+
+No GNOME, **quem cria o monitor é o próprio GNOME**, a pedido do Sunshine, e não o DeckScreen:
+
+1. O Sunshine do DeckScreen (com `capture = portal` e `portal_virtual_display = enabled`) pede ao portal de captura uma fonte do tipo **virtual** (`SOURCE_TYPE_VIRTUAL = 4`). O `xdg-desktop-portal-gnome` chama `org.gnome.Mutter.ScreenCast.RecordVirtual`, e o Mutter cria um monitor `Meta-N` do tamanho negociado no PipeWire, ou seja, a resolução do Deck.
+2. Diferente de uma fonte "monitor", a permissão de uma fonte virtual é **restaurada sem precisar casar um monitor existente**. Por isso o diálogo "Compartilhar tela" aparece só na primeira vez. (Com fonte "monitor", o portal compara `vendor:produto:serial`, e o Mutter dá um serial novo a cada monitor virtual; a permissão nunca seria lembrada.)
+3. Como o monitor só nasce **depois** do hook `start`, o `GnomeBackend::start()` só tira uma foto do layout (salva em `restore.json` como `{"gnome": …}`) e dispara uma *thread* que consulta o estado a cada 500 ms, por até 60 s, até surgir um monitor novo `Meta-*`/`MetaVendor`.
+4. `gnome_plan()` calcula o layout: escala suportada mais próxima da pedida, transform 1/3 para vertical, e posição **ancorada no monitor mais externo** do lado escolhido (o Mutter exige monitores adjacentes). Em *deck_only* fica só o monitor do Deck como primário. O layout é aplicado com `ApplyMonitorsConfig` no método temporário (1), sem gravar o `monitors.xml`.
+5. `stop()` cancela a *thread*, reaplica a foto (`gnome_restore_plan`, só com os monitores que ainda existem) e apaga `restore.json`. O monitor virtual some quando o Sunshine encerra a captura.
+
+O acesso ao Mutter passa pelo trait `Mutter` (`RealMutter` em produção; `FakeMutter` nos testes). `RealMutter` executa `host/assets/gnome-display.py` (embutido no binário e gravado em `~/.local/share/deckscreen/`) com o `python3` do sistema e o **PyGObject**:
+- `state` imprime em JSON o `GetCurrentState` (monitores, modos com escalas suportadas, monitores lógicos, `layout-mode`);
+- `apply` recebe pelo stdin `{"logical": [...]}` e chama `ApplyMonitorsConfig(serial, 1, …)`.
+
+**Espelhar no GNOME:** não usa monitor virtual. O Sunshine precisa capturar a tela real (`portal_virtual_display = disabled`), e essa opção só é lida quando o Sunshine inicia. Por isso, quando o modo muda de ou para "mirror", `State::settings_changed()` reescreve o `sunshine.conf` e reinicia o serviço do Sunshine. Se houver uma sessão ativa, a troca espera ela terminar (`pending_sunshine`).
+
 #### Espelho (`MirrorBackend`)
 
 Não faz nada: o Sunshine transmite a tela que já captura. É usado em GNOME, X11 e outras áreas de trabalho.
@@ -393,6 +412,7 @@ Não faz nada: o Sunshine transmite a tela que já captura. É usado em GNOME, X
 - `merge_conf()` define ou remove chaves no `sunshine.conf` e preserva todas as outras linhas e comentários. `conf_values(desktop)`:
   - KDE: `capture=kwin`, `output_name=Virtual-DeckScreen`;
   - Hyprland: `capture=wlr`, `output_name=DeckScreen`;
+  - GNOME com o Sunshine do DeckScreen: `capture=portal`, `portal_virtual_display=enabled` (ou `disabled` no modo espelhar), sem `output_name`;
   - outras: não mexe na captura e remove o `output_name` do DeckScreen, se houver.
 - `merge_apps()` garante a chave `env` (sem ela o Sunshine não lê o arquivo), remove qualquer app "DeckScreen" antigo e acrescenta o novo com `prep-cmd: [{do: "<bin> hook start", undo: "<bin> hook stop"}]` e `auto-detach: true`. Os outros apps ficam intactos.
 - `configure()` faz backup (`*.deckscreen-bak.<unix>`) antes de escrever. `unconfigure()` desfaz.
@@ -430,6 +450,19 @@ As perguntas respondem **não** quando não há terminal. A pergunta destrutiva 
 - `doctor::checks()` confere: área de trabalho e capacidade, Wayland, ferramentas, Sunshine (instalado, serviço, acesso à API), `sunshine.conf`, app no `apps.json`, serviço do DeckScreen, rede (cabo ou Wi-Fi), Wake-on-LAN e firewall. Os mesmos dados alimentam o CLI, `/api/doctor` e o `report`.
 - `doctor::report()` junta tudo em `~/deckscreen-relatorio-<unix>.tar.gz`: doctor, config sem segredos, variáveis de ambiente, saída de `kscreen-doctor`/`hyprctl`, journal do DeckScreen e do Sunshine, logs e arquivos do Sunshine.
 - `net.rs` usa só `ip`, `/sys/class/net`, `nmcli` e `ethtool`. O estado do WoL vem do NetworkManager e, quando ele está em `default`/`ignore`, do `ethtool` (`Wake-on: g`).
+
+### 5.9b Sunshine do DeckScreen (fork, para o GNOME)
+
+O fork [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine), branch `deckscreen/portal-virtual-display`, acrescenta ao Sunshine oficial cerca de 50 linhas:
+
+| Arquivo | Mudança |
+|---|---|
+| `src/config.h` / `src/config.cpp` | opção `portal_virtual_display` (bool, padrão desligada) |
+| `src/platform/linux/portalgrab.cpp` | com a opção ligada, `SelectSources` pede `types = SOURCE_TYPE_VIRTUAL (4)` e `multiple = false`. Se o portal não informar o tamanho do stream, usa a resolução do cliente (`requested_width/height`) na negociação do PipeWire |
+| `docs/configuration.md` | documentação da opção |
+| `.github/workflows/deckscreen-appimage.yml` | reaproveita o `ci-linux.yml` do próprio Sunshine para gerar os AppImages (x86_64 e aarch64) e publica a release `deckscreen-v<data>` |
+
+O instalador baixa o AppImage mais recente desse fork para `~/Applications/Sunshine-DeckScreen.AppImage` e roda `--install`. Isso cria as regras udev do controle virtual e um serviço de usuário que tem prioridade sobre o do pacote. A ideia é propor essa mudança ao projeto oficial; se ela for aceita, o fork deixa de ser necessário.
 
 ### 5.9 Infraestrutura: `json.rs`, `http.rs`, `crypto.rs`, `util.rs`
 
@@ -591,7 +624,8 @@ O formato v1 (`"host"` + `"token"`) é migrado automaticamente por `_load()`.
 
 | Onde | O que cobre | Como rodar |
 |---|---|---|
-| `host/src/*` (`#[cfg(test)]`) — **27 testes** | JSON (ida e volta, erros, ordem); SHA-256/HMAC (vetores oficiais); servidor HTTP; geometria do layout; backend KDE com `FakeKs` (estender, só no Deck, espelhar, rotação, script, falha limpa); merge de `sunshine.conf`/`apps.json`; PIN nas APIs nova e antiga e com senha errada; pareamento; **API completa** (assinatura, replay, corpo adulterado, relógio, hooks, widget, unpair); busca UDP; configurações e migração; nomes de pacotes | `cd host && cargo test` |
+| `host/src/*` (`#[cfg(test)]`) — **30 testes** | JSON (ida e volta, erros, ordem); SHA-256/HMAC (vetores oficiais); servidor HTTP; geometria do layout; backend KDE com `FakeKs` (estender, só no Deck, espelhar, rotação, script, falha limpa); layout do GNOME e backend com `FakeMutter` (espera o monitor, posiciona, restaura); merge de `sunshine.conf`/`apps.json`; PIN nas APIs nova e antiga e com senha errada; pareamento; **API completa** (assinatura, replay, corpo adulterado, relógio, hooks, widget, unpair); busca UDP; configurações e migração; nomes de pacotes | `cd host && cargo test` |
+| `tests/test_gnome_helper.py` | ajudante do GNOME com um PyGObject falso: leitura do `GetCurrentState` e montagem do `ApplyMonitorsConfig` | `python3 -m unittest discover -s tests` |
 | `tests/test_deck_backend.py` | assinatura igual à especificação, pacote mágico, parser do `nmcli`, dicas do teste de rede, migração v1, linha do Moonlight | `python3 -m unittest discover -s tests` |
 | `tests/frontend_smoke.mjs` | interface inteira com React, `@decky/ui` e `SteamClient` **falsos**: buscar → adicionar → parear (PIN, atalho, fechar o Moonlight) → conectar → modo/perfil/regras → giroscópio (Steam Input) → preset → teste de rede → diagnóstico → encerrar → PC desligado (Wake-on-LAN) | `cd deck && tsc -p . && node ../tests/frontend_smoke.mjs` |
 | `tests/integration.py` | **binário real + `main.py` real**: sobe o daemon com `HOME`/XDG temporários e passa por adicionar, parear (aprovando pelo CLI), status, configurações, doctor, teste de rede, encerrar e esquecer | `python3 tests/integration.py host/target/release/deckscreen-host` |
@@ -692,6 +726,6 @@ gdbus call --session --dest org.kde.KWin --object-path /Scripting \
 - **Tela vertical** depende de como a captura do KWin entrega uma saída rotacionada: pode chegar com tarja preta ou girada. Por isso está marcada como experimental.
 - **Giroscópio:** com o Steam Input desligado, o Moonlight (SDL) precisa enxergar o controle do Deck diretamente; isso varia com a versão do SteamOS e do Flatpak.
 - **Hyprland:** a sintaxe de regras de janela mudou entre versões. O código tenta `windowrulev2` e depois `windowrule`.
-- **GNOME** sabe criar monitores virtuais: a API `org.gnome.Mutter.ScreenCast.RecordVirtual` existe desde o Mutter 40, e o modo "estender" do GNOME Remote Desktop usa essa API. O monitor, porém, só existe enquanto quem o criou mantém a sessão de captura aberta, e os quadros vão para esse processo pelo PipeWire. O Sunshine não sabe capturar um monitor criado por outro processo, então hoje o GNOME fica no modo espelho. Caminho para suportar: criar o monitor pelo DeckScreen e fazer o Sunshine capturá-lo pela captura `portal`, o que precisa de testes num GNOME real. **X11** fica só no espelho.
+- **GNOME** depende do **Sunshine do DeckScreen** (fork com `portal_virtual_display`, §5.10). Com o Sunshine oficial, o GNOME fica no modo espelho. O GNOME também não permite mover janelas por programa, então o modo Wii U não é automático nele.
 - **Sunshine em Flatpak** não funciona com a captura `kwin` sem desativar uma proteção do KWin. O instalador prefere o pacote ou o AppImage.
 - **Uma sessão por vez:** a tela virtual é única (`DeckScreen`). Dois Decks ao mesmo tempo exigiriam nomes de output dinâmicos e `output_name` por sessão no Sunshine.

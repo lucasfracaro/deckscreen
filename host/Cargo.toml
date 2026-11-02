@@ -1,6 +1,6 @@
 [package]
 name = "deckscreen-host"
-version = "2.0.1"
+version = "2.1.0"
 edition = "2021"
 rust-version = "1.80"
 description = "DeckScreen: Steam Deck como segunda tela e controle do PC Linux (estilo Wii U GamePad)"

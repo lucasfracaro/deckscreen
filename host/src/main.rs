@@ -132,7 +132,9 @@ fn run(args: Vec<String>) -> i32 {
             let exe = std::env::current_exe()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            match sunshine::configure(display::detect_desktop(), &exe) {
+            let cfg = config::Config::load_default();
+            display::set_gnome_virtual(cfg.portal_virtual());
+            match sunshine::configure(display::detect_desktop(), &exe, cfg.settings().mode == "mirror") {
                 Ok(n) => {
                     n.iter().for_each(|l| println!("  {l}"));
                     0
@@ -287,6 +289,7 @@ fn open_terminal_installer() -> i32 {
 
 fn main() {
     util::ensure_session_env();
+    display::set_gnome_virtual(config::peek_portal_virtual());
     let args: Vec<String> = std::env::args().collect();
     std::process::exit(run(args));
 }

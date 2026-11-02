@@ -65,6 +65,35 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         v.push(tool("kscreen-doctor", "kscreen-doctor", "kscreen", true));
         v.push(tool("gdbus (Modo Wii U)", "gdbus", "glib2", false));
     }
+    if desktop == Desktop::Gnome {
+        v.push(c(
+            "Sessão Wayland",
+            if display::is_wayland() { "ok" } else { "fail" },
+            std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
+        ));
+        v.push(if display::gnome_virtual() {
+            c(
+                "Sunshine do DeckScreen",
+                "ok",
+                "monitor virtual do GNOME ativado (portal_virtual_display)",
+            )
+        } else {
+            c(
+                "Sunshine do DeckScreen",
+                "warn",
+                "não instalado: o Deck só espelha. Rode 'deckscreen-host install' para instalar",
+            )
+        });
+        v.push(if crate::install::has_pygobject() {
+            c("PyGObject (posicionar o monitor)", "ok", "python3-gi")
+        } else {
+            c(
+                "PyGObject (posicionar o monitor)",
+                "fail",
+                "instale python3-gi / python-gobject",
+            )
+        });
+    }
     if desktop == Desktop::Hyprland {
         v.push(tool("hyprctl", "hyprctl", "hyprland", true));
     }
@@ -117,6 +146,19 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         Desktop::Hyprland => (Some("wlr"), Some(HYPR_OUTPUT)),
         _ => (None, None),
     };
+    if desktop == Desktop::Gnome && display::gnome_virtual() {
+        let cap_now = sunshine::conf_get(&conf, "capture").unwrap_or_default();
+        let pv = sunshine::conf_get(&conf, "portal_virtual_display").unwrap_or_default();
+        v.push(c(
+            "Configuração do Sunshine",
+            if cap_now == "portal" && !pv.is_empty() {
+                "ok"
+            } else {
+                "fail"
+            },
+            format!("capture = {cap_now:?}, portal_virtual_display = {pv:?}"),
+        ));
+    }
     if let (Some(wc), Some(wo)) = (want_cap, want_out) {
         let cap_now = sunshine::conf_get(&conf, "capture").unwrap_or_default();
         let out_now = sunshine::conf_get(&conf, "output_name").unwrap_or_default();

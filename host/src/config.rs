@@ -215,6 +215,15 @@ pub struct Config {
     loaded: Option<SystemTime>,
 }
 
+/// Read sunshine.portal_virtual without creating/modifying config.json.
+pub fn peek_portal_virtual() -> bool {
+    std::fs::read_to_string(Config::default_path())
+        .ok()
+        .and_then(|s| Json::parse(&s).ok())
+        .and_then(|j| j.get("sunshine").map(|s| s.bool_at("portal_virtual", false)))
+        .unwrap_or(false)
+}
+
 pub fn valid_device_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -301,6 +310,19 @@ impl Config {
     pub fn sunshine(&self) -> (String, String, String) {
         let s = self.data.get("sunshine").cloned().unwrap_or_default();
         (s.str_at("url"), s.str_at("user"), s.str_at("password"))
+    }
+
+    /// Sunshine is the DeckScreen build (portal_virtual_display), needed on GNOME.
+    pub fn portal_virtual(&self) -> bool {
+        self.data
+            .get("sunshine")
+            .map(|s| s.bool_at("portal_virtual", false))
+            .unwrap_or(false)
+    }
+
+    pub fn set_portal_virtual(&mut self, on: bool) {
+        self.data.entry_obj("sunshine").set("portal_virtual", on);
+        self.save();
     }
 
     pub fn set_sunshine_creds(&mut self, user: &str, password: &str) {

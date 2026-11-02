@@ -31,7 +31,7 @@ Transforma o **Steam Deck** em **segunda tela + controle** do seu PC Linux, no e
 |---|---|---|
 | **KDE Plasma 6 (Wayland)**, ex.: CachyOS, Fedora KDE, Kubuntu | ✅ completo, com widget na bandeja | ✅ |
 | **Hyprland** | 🧪 experimental | ✅ |
-| **GNOME (Wayland)** | ❌ ainda não: o GNOME cria monitores virtuais, mas o DeckScreen ainda não liga isso ao Sunshine | ✅ |
+| **GNOME (Wayland)**, ex.: Ubuntu, Fedora Workstation | 🧪 experimental, com o [Sunshine do DeckScreen](#gnome) | ✅ |
 | X11 e outras | ❌ | ✅ |
 
 ## O atraso é alto?
@@ -105,6 +105,15 @@ Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam: ele
 | **Ligar o PC** | Wake-on-LAN: funciona com o PC suspenso e no cabo (ative também na BIOS) |
 | **Testar conexão / Diagnóstico do PC** | mede a rede, aponta problemas e confere a instalação do PC |
 
+### GNOME
+
+No GNOME, quem cria o monitor do Deck é o próprio GNOME, a pedido do Sunshine. Isso exige uma opção que o Sunshine oficial ainda não tem (`portal_virtual_display`). O DeckScreen usa então o **Sunshine do DeckScreen**: um fork com essa mudança, em [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine), publicado como AppImage. O instalador oferece instalá-lo quando detecta o GNOME.
+
+- **Só na primeira conexão**, aparece no PC a janela "Compartilhar tela". Escolha **Monitor virtual**, marque **Lembrar** e clique em **Compartilhar**. Depois disso, as conexões são automáticas.
+- **Estender** e **Só no Deck** funcionam. **Espelhar** também funciona, mas trocar de ou para esse modo reinicia o Sunshine.
+- O GNOME não deixa programas moverem janelas. No modo Wii U, leve a janela para o Deck com **Super+Shift+→** ou arrastando.
+- Sem o Sunshine do DeckScreen, o Deck só espelha a tela.
+
 ### Experiência Wii U com o Cemu
 
 No Cemu, ative **Options → Separate GamePad view**. No Deck, escolha o perfil **Wii U (Cemu)** com o modo **Estender** e toque em **Conectar**. O jogo fica no monitor ou na TV, e a tela do GamePad aparece em tela cheia no Deck, com toque. Para emuladores de duas telas (DS/3DS), use o perfil **Personalizado** com parte do título da segunda janela.
@@ -160,7 +169,7 @@ build.sh     roda todos os testes e gera release/ (AppImage, tar.gz, zip do Deck
 ```
 
 ```bash
-cd host && cargo test            # 27 testes do serviço
+cd host && cargo test            # 30 testes do serviço
 ./build.sh                       # tudo + pacotes
 ```
 
