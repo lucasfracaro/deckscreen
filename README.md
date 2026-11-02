@@ -83,9 +83,16 @@ deckscreen-host install
 
 ## Instalação no Steam Deck
 
-1. Copie `DeckScreen-decky.zip` para o Deck (pendrive, KDE Connect, Warpinator ou download no Modo Desktop).
-2. Abra **⋯ → Decky → ⚙ → Geral** e ative o **Modo desenvolvedor**.
-3. Em **Desenvolvedor → Instalar plugin de arquivo ZIP**, escolha o zip.
+O plugin é o arquivo `DeckScreen-decky.zip`, publicado em [Releases](../../releases). Não precisa copiar nada para o Deck: o Decky instala direto do link.
+
+1. No Modo Jogo, abra **⋯ → Decky → ⚙ (Configurações) → Geral** e ative o **Modo desenvolvedor**.
+2. Na aba **Desenvolvedor**, em **Instalar plugin a partir da URL**, digite o endereço abaixo e toque em **Instalar**:
+   ```
+   https://github.com/lucasfracaro/deckscreen/releases/latest/download/DeckScreen-decky.zip
+   ```
+3. Confirme o aviso de plugin de terceiros. O **DeckScreen** aparece na lista do Decky.
+
+**Alternativa por arquivo:** no Modo Desktop, baixe o zip pelo navegador. Depois, no Modo Jogo, use **Desenvolvedor → Instalar plugin a partir de um arquivo ZIP → Navegar** e escolha o arquivo em `Downloads`.
 
 ## Primeiro uso
 
