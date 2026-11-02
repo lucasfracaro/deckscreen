@@ -24,6 +24,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Versão
+        id: ver
+        run: echo "tag=v$(grep -m1 '^version' host/Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Testes e pacotes
         env:
           TARGET: x86_64-unknown-linux-musl
@@ -34,6 +38,9 @@ jobs:
       - name: Publicar a release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: DeckScreen ${{ steps.ver.outputs.tag }}
           files: release/*
           generate_release_notes: true
           body: |
