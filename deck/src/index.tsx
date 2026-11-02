@@ -134,7 +134,7 @@ async function runPairing(): Promise<void> {
   const r = await call<{ ok: boolean; pin: string; request_id: string; launch_options: string; error?: string }>("pair_start");
   if (!r.ok) { toast("DeckScreen", r.error || "Falha ao pedir pareamento"); return; }
   setPair({ pin: r.pin, requestId: r.request_id, state: "pending" });
-  toast("Aceite no PC", `Confira o PIN ${r.pin} na notificação do PC e clique em Aceitar.`);
+  toast("Aceite no PC", `Confira o PIN ${r.pin} na notificação do PC e clique em Aceitar. A janela do Moonlight que abrir agora é só do pareamento e fecha sozinha.`);
 
   const appId = await prepareShortcut();
   if (appId) await launchShortcut(appId, r.launch_options);   // Moonlight: pair <ip> --pin XXXX
@@ -150,10 +150,18 @@ async function runPairing(): Promise<void> {
     if (st.state === "approved" && !accepted) { accepted = true; toast("DeckScreen", "PC aceitou! Finalizando com o Moonlight…"); }
     if (accepted && st.sunshine && st.sunshine !== "waiting") {
       toast("DeckScreen", st.sunshine === "ok"
-        ? "Pareado! Abra o DeckScreen e toque em Conectar."
+        ? "Pareado! Agora toque em Conectar no menu do DeckScreen (⋯ → Decky)."
         : "O Moonlight não confirmou o PIN. Se ele já estava pareado, pode ignorar; senão tente de novo.");
       await sleep(2500);
-      if (appId) terminateShortcut(appId);
+      if (appId) {
+        terminateShortcut(appId);
+        // From now on the "DeckScreen" tile in the library connects (instead of pairing again).
+        const opts = await call<string>("stream_launch_options");
+        if (opts) {
+          SteamClient.Apps.SetAppLaunchOptions(appId, opts);
+          await waitDetails(appId, (d) => d.strLaunchOptions === opts);
+        }
+      }
       break;
     }
   }

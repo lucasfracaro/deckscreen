@@ -100,9 +100,10 @@ O plugin é o arquivo `DeckScreen-decky.zip`, publicado em [Releases](../../rele
 2. **Procurar PC na rede** → escolha o seu PC. Se ele não aparecer, digite o IP: o instalador mostra o IP no final.
 3. **Parear com este PC.** O Deck mostra um PIN.
 4. No PC, aceite a notificação **"Steam Deck quer se conectar — PIN 1234"**. Também dá para aceitar pelo widget da bandeja ou com `deckscreen-host accept`.
-5. **Conectar.** Pronto.
+5. A janela cinza do Moonlight que abriu durante o pareamento mostra "pareado" e **fecha sozinha**. Isso era só o pareamento.
+6. Abra de novo **⋯ → Decky → DeckScreen** e toque em **Conectar**. Agora sim a tela do PC aparece no Deck.
 
-Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam: ele abre a última conexão direto.
+Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam. Depois do pareamento, abrir esse jogo conecta direto ao PC.
 
 ## Opções
 
