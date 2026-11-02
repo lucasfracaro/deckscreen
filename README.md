@@ -146,6 +146,7 @@ deckscreen-host devices     # Decks pareados (forget ID para remover)
 deckscreen-host report      # gera um .tar.gz com logs, sem senhas, para pedir ajuda
 deckscreen-host sunshine-login       # mostra o usuário e a senha da interface web do Sunshine
 deckscreen-host sunshine-login set   # troca o login (no Sunshine e no DeckScreen ao mesmo tempo)
+deckscreen-host fix-input            # corrige o controle/mouse virtual (botões e trackpad do Deck)
 deckscreen-host uninstall   # remove do PC
 ```
 
@@ -158,6 +159,7 @@ deckscreen-host uninstall   # remove do PC
 | Tela preta | `deckscreen-host doctor`. O Sunshine **não pode ser a versão Flatpak** |
 | O Sunshine pede usuário e senha no navegador | Foi o instalador que criou esse login: veja com `deckscreen-host sunshine-login` ou troque com `deckscreen-host sunshine-login set` |
 | "Não acessa o Sunshine" | A senha da interface web mudou por fora: rode `deckscreen-host sunshine-login set` |
+| A tela aparece, mas botões e trackpad do Deck não fazem nada | Reinicie o PC se o kernel foi atualizado; depois rode `deckscreen-host fix-input` (carrega `uinput`/`uhid`, instala a regra udev do Sunshine e coloca você no grupo `input`) e saia/entre na sessão |
 | Cursor mexe, mas o clique não funciona | `systemctl --user restart app-dev.lizardbyte.app.Sunshine.service` |
 | Monitores do PC desligados ou fora do lugar | `deckscreen-host stop`. O serviço também restaura sozinho se algo cair |
 | "Relógio do Deck e do PC muito diferentes" | Ative a hora automática nos dois |

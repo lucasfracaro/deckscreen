@@ -125,7 +125,7 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         )),
         None => v.push(c("Serviço do Sunshine", "warn", "serviço de usuário não encontrado")),
     }
-    v.push(virtual_input_check());
+    v.extend(virtual_input_checks());
     let cfg = Config::load_default();
     let api = sunshine::api_from_config(&cfg);
     v.push(if cfg.sunshine().1.is_empty() {
@@ -248,28 +248,22 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
     v
 }
 
-/// Sunshine creates the virtual controller/mouse through /dev/uinput (and uhid).
-/// After a kernel update without reboot the running kernel's modules are gone.
-fn virtual_input_check() -> Check {
-    let label = "Controle virtual (uinput)";
-    if std::path::Path::new("/dev/uinput").exists() {
-        return c(label, "ok", "/dev/uinput disponível");
+/// Sunshine creates the virtual controller/mouse through /dev/uinput and /dev/uhid.
+fn virtual_input_checks() -> Vec<Check> {
+    let label = "Controle virtual (uinput/uhid)";
+    let mut v = vec![match crate::input::problem() {
+        None => c(label, "ok", "/dev/uinput e /dev/uhid acessíveis"),
+        Some((status, detail)) => c(label, status, detail),
+    }];
+    let errs = crate::input::sunshine_log_errors();
+    if !errs.is_empty() {
+        v.push(c(
+            "Entrada no log do Sunshine",
+            "warn",
+            format!("{} (rode: deckscreen-host fix-input)", errs.join(" | ")),
+        ));
     }
-    let kernel = util::run_stdout("uname", &["-r"])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    if !kernel.is_empty() && !std::path::Path::new(&format!("/lib/modules/{kernel}")).exists() {
-        return c(
-            label,
-            "fail",
-            format!("o kernel foi atualizado e o PC não reiniciou ({kernel}): reinicie o PC"),
-        );
-    }
-    c(
-        label,
-        "fail",
-        "carregue o módulo: sudo modprobe uinput (o Sunshine instala o carregamento automático)",
-    )
+    v
 }
 
 pub fn checks_json(desktop: Desktop) -> Json {

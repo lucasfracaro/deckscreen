@@ -553,14 +553,14 @@ pub fn install(o: &Opts) -> i32 {
         report_gnome_support(desktop);
     }
 
-    if !std::path::Path::new("/dev/uinput").exists() {
-        let kernel = util::run_stdout("uname", &["-r"])
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        if !std::path::Path::new(&format!("/lib/modules/{kernel}")).exists() {
-            warn("O kernel foi atualizado e o PC ainda não reiniciou: o controle virtual do Sunshine (uinput)");
-            warn("só funciona depois de reiniciar. Pode continuar a instalação e reiniciar no final.");
-        }
+    say("Controle virtual (botões e trackpad do Deck)");
+    if let Some(k) = crate::input::reboot_pending() {
+        warn(&format!(
+            "O kernel foi atualizado e o PC ainda não reiniciou ({k}): o controle virtual"
+        ));
+        warn("só funciona depois de reiniciar. Pode continuar a instalação e reiniciar no final.");
+    } else {
+        crate::input::fix(o.yes);
     }
 
     say("Instalando o DeckScreen");

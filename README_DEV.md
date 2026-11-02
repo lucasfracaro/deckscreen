@@ -81,6 +81,7 @@ deckscreen/
 │   │   ├── config.rs             config.json, configurações (Settings) e perfis
 │   │   ├── install.rs            install/uninstall para qualquer distro
 │   │   ├── doctor.rs             diagnóstico e relatório
+│   │   ├── input.rs              controle virtual: /dev/uinput, /dev/uhid, regra udev, grupo input
 │   │   ├── net.rs                interface, MAC, cabo/Wi-Fi, estado do Wake-on-LAN
 │   │   ├── http.rs               servidor e cliente HTTP/1.1 mínimos
 │   │   ├── json.rs               tipo JSON, parser e serializador
@@ -440,6 +441,7 @@ Não faz nada: o Sunshine transmite a tela que já captura. É usado em GNOME, X
 2. **Dependências** por área de trabalho (`required_bins`): sempre `curl`, `ip` e `notify-send`; no KDE também `krfb-virtualmonitor`, `kscreen-doctor` e `gdbus`. `package_for(bin, pm)` traduz o nome do pacote, por exemplo `notify-send` → `libnotify-bin` no apt.
 3. **Sunshine** (`ensure_sunshine`): pacote `sunshine` no Arch; senão `sunshine-bin` via paru/yay; senão o **AppImage oficial**, baixado pela API do GitHub para `~/Applications/Sunshine.AppImage` e configurado com `--install`, que cria as regras udev do controle virtual e o serviço. Se o Sunshine instalado for Flatpak, o instalador avisa que a captura `kwin` não funciona nele.
 4. **Binário**: copia `current_exe()` para `~/.local/bin/deckscreen-host`, escrevendo num arquivo temporário e renomeando, o que funciona mesmo com o serviço rodando. Se foi instalado por pacote (`/usr/…` com a unidade em `/usr/lib/systemd/user`), usa o binário do pacote.
+   Logo depois vem o **controle virtual** (`input::fix`): se o kernel foi atualizado sem reiniciar, só avisa; senão, quando `/dev/uinput` ou `/dev/uhid` faltam ou não abrem para escrita, carrega `uinput`/`uhid`, grava `/etc/modules-load.d/60-sunshine.conf` e `/etc/udev/rules.d/60-sunshine.rules` se nenhuma cópia existir, recarrega o udev, coloca o usuário no grupo `input` e reinicia o Sunshine.
 5. **Login do Sunshine**: se não existe usuário, cria `deckscreen` com senha aleatória via `sunshine --creds`; se existe, pede a senha (sem eco no terminal).
 6. `sunshine::configure()`.
 7. **systemd**: unidade de usuário (a menos que venha do pacote), drop-in do Sunshine no KDE, `enable`/`restart` dos dois serviços e verificação de que o serviço do DeckScreen subiu.
@@ -451,7 +453,7 @@ As perguntas respondem **não** quando não há terminal. A pergunta destrutiva 
 
 ### 5.8 `doctor.rs` e `net.rs`
 
-- `doctor::checks()` confere: área de trabalho e capacidade, Wayland, ferramentas, Sunshine (instalado, serviço, acesso à API), `sunshine.conf`, app no `apps.json`, serviço do DeckScreen, rede (cabo ou Wi-Fi), Wake-on-LAN e firewall. Os mesmos dados alimentam o CLI, `/api/doctor` e o `report`.
+- `doctor::checks()` confere: área de trabalho e capacidade, Wayland, ferramentas, Sunshine (instalado, serviço, acesso à API), `sunshine.conf`, app no `apps.json`, controle virtual (`input::problem`: `/dev/uinput` e `/dev/uhid` existem e abrem para escrita; erros de entrada no journal do Sunshine), serviço do DeckScreen, rede (cabo ou Wi-Fi), Wake-on-LAN e firewall. Os mesmos dados alimentam o CLI, `/api/doctor` e o `report`.
 - `doctor::report()` junta tudo em `~/deckscreen-relatorio-<unix>.tar.gz`: doctor, config sem segredos, variáveis de ambiente, saída de `kscreen-doctor`/`hyprctl`, journal do DeckScreen e do Sunshine, logs e arquivos do Sunshine.
 - `net.rs` usa só `ip`, `/sys/class/net`, `nmcli` e `ethtool`. O estado do WoL vem do NetworkManager e, quando ele está em `default`/`ignore`, do `ethtool` (`Wake-on: g`).
 
@@ -604,6 +606,7 @@ flatpak run com.moonlight_stream.Moonlight stream <ip> DeckScreen \
 | `~/.config/systemd/user/deckscreen-host.service` | unidade do serviço (só na instalação manual ou AppImage) |
 | `~/.config/systemd/user/<serviço-do-sunshine>.d/deckscreen.conf` | espera o KWin (só no KDE) |
 | `~/.local/share/applications/deckscreen-stop.desktop` | atalho "desconectar" |
+| `/etc/modules-load.d/60-sunshine.conf`, `/etc/udev/rules.d/60-sunshine.rules`, grupo `input` | só pelo `fix-input`, e só se o Sunshine não tiver instalado os dele |
 
 ### 8.4 Deck — `~/homebrew/settings/DeckScreen/settings.json` (600)
 
