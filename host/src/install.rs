@@ -204,41 +204,20 @@ fn ensure_sunshine(pm: Pm, yes: bool) -> Result<String, String> {
     Ok(app)
 }
 
-/// GNOME: the DeckScreen build of Sunshine (portal_virtual_display) lets the
-/// Deck become an extra monitor. Returns true when it is installed.
-fn ensure_gnome_sunshine(cfg: &mut Config, yes: bool) -> bool {
-    let fork = util::home().join("Applications").join("Sunshine-DeckScreen.AppImage");
-    if cfg.portal_virtual() && fork.exists() {
-        ok("Sunshine do DeckScreen (monitor virtual no GNOME) já instalado");
-        return true;
+/// GNOME: the Deck becomes an extra monitor only when Sunshine supports
+/// `portal_virtual_display` (proposed to the official project). Until then: mirror.
+fn report_gnome_support(desktop: Desktop) -> bool {
+    let on = sunshine::refresh_gnome_virtual(desktop);
+    if on {
+        ok("o Sunshine tem portal_virtual_display: o Deck vai virar um monitor extra no GNOME");
+    } else {
+        warn("GNOME: por enquanto o Deck espelha a tela e funciona como controle.");
+        println!(
+            "    Virar monitor extra no GNOME depende da opção portal_virtual_display, proposta ao Sunshine oficial."
+        );
+        println!("    Quando ela chegar numa versão do Sunshine, o DeckScreen ativa sozinho.");
     }
-    println!("  No GNOME, para o Deck virar um monitor extra é preciso o Sunshine com a extensão do DeckScreen");
-    println!(
-        "  (fork {} com a opção portal_virtual_display). Sem ele, o Deck só espelha a tela.",
-        sunshine::FORK_REPO
-    );
-    if !ask_yes("Instalar o Sunshine do DeckScreen (AppImage)?", yes) {
-        cfg.set_portal_virtual(false);
-        return false;
-    }
-    match download_appimage_from(sunshine::FORK_REPO, "Sunshine-DeckScreen.AppImage") {
-        Ok(app) => {
-            println!("  Configurando o Sunshine do DeckScreen (pode pedir sua senha)…");
-            if !util::run_interactive(&app, &["--install"]) {
-                warn("o '--install' do Sunshine não terminou bem; o controle virtual pode precisar de ajuste manual");
-            }
-            cfg.set_portal_virtual(true);
-            ok(&format!("{app} (passa a ser o serviço do Sunshine do seu usuário)"));
-            true
-        }
-        Err(e) => {
-            warn(&format!(
-                "não consegui baixar o Sunshine do DeckScreen: {e}. Seguindo no modo espelhar."
-            ));
-            cfg.set_portal_virtual(false);
-            false
-        }
-    }
+    on
 }
 
 fn sunshine_username() -> String {
@@ -477,7 +456,11 @@ pub fn install(o: &Opts) -> i32 {
             warn(&format!("instale manualmente: {}", pkgs.join(" ")));
         }
     }
-    if desktop == Desktop::Gnome && display::is_wayland() && !has_pygobject() {
+    if desktop == Desktop::Gnome
+        && display::is_wayland()
+        && sunshine::refresh_gnome_virtual(desktop)
+        && !has_pygobject()
+    {
         let pkg = pygobject_package(pm);
         println!("  Faltando: {pkg} (o DeckScreen usa para posicionar o monitor no GNOME)");
         if pm == Pm::Unknown || !ask_yes("Instalar agora? (pede sua senha)", o.yes) || !install_packages(pm, &[pkg]) {
@@ -497,9 +480,8 @@ pub fn install(o: &Opts) -> i32 {
 
     let mut cfg = Config::load_default();
     if desktop == Desktop::Gnome && display::is_wayland() {
-        say("Sunshine para o GNOME");
-        let on = ensure_gnome_sunshine(&mut cfg, o.yes);
-        display::set_gnome_virtual(on);
+        say("GNOME");
+        report_gnome_support(desktop);
     }
 
     say("Instalando o DeckScreen");

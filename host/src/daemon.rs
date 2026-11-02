@@ -527,6 +527,7 @@ pub fn discovery_loop(sock: UdpSocket, desktop: Desktop) {
 pub fn run(verbose: bool) -> i32 {
     util::init_log_file();
     let desktop = display::detect_desktop();
+    sunshine::refresh_gnome_virtual(desktop);
     let cfg = Arc::new(Mutex::new(Config::load_default()));
     let api: Arc<dyn SunshineApi> = Arc::new(sunshine::api_from_config(&cfg.lock().unwrap()));
     let mut backend = display::backend_for(desktop);

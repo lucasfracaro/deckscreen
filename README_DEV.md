@@ -315,7 +315,11 @@ pub trait Backend: Send {
 }
 ```
 
-`capability()` no GNOME só devolve `virtual` se o Sunshine do DeckScreen estiver instalado. O instalador grava `sunshine.portal_virtual = true` no `config.json`, e o `main()` lê esse valor com `peek_portal_virtual()` e chama `display::set_gnome_virtual()`.
+`capability()` no GNOME só devolve `virtual` quando o Sunshine tem a opção `portal_virtual_display`. `sunshine::refresh_gnome_virtual()` decide isso de dois jeitos:
+- procura o texto `portal_virtual_display` dentro do executável nativo do Sunshine (`supports_portal_virtual()`; não funciona com AppImage, que é comprimido);
+- ou lê a ativação manual `sunshine.portal_virtual` do `config.json`, gravada por `deckscreen-host gnome-virtual on`.
+
+O daemon, o instalador, o `doctor` e o `setup` chamam essa função. Assim, quando a opção chegar ao Sunshine oficial, o suporte liga sozinho.
 
 `detect_desktop()` decide nesta ordem:
 1. `HYPRLAND_INSTANCE_SIGNATURE` + `hyprctl` → Hyprland;
@@ -381,7 +385,7 @@ As strings vão para o script serializadas como JSON, o que evita injeção. O a
 
 No GNOME, **quem cria o monitor é o próprio GNOME**, a pedido do Sunshine, e não o DeckScreen:
 
-1. O Sunshine do DeckScreen (com `capture = portal` e `portal_virtual_display = enabled`) pede ao portal de captura uma fonte do tipo **virtual** (`SOURCE_TYPE_VIRTUAL = 4`). O `xdg-desktop-portal-gnome` chama `org.gnome.Mutter.ScreenCast.RecordVirtual`, e o Mutter cria um monitor `Meta-N` do tamanho negociado no PipeWire, ou seja, a resolução do Deck.
+1. Um Sunshine com a opção `portal_virtual_display` (com `capture = portal` e `portal_virtual_display = enabled`) pede ao portal de captura uma fonte do tipo **virtual** (`SOURCE_TYPE_VIRTUAL = 4`). O `xdg-desktop-portal-gnome` chama `org.gnome.Mutter.ScreenCast.RecordVirtual`, e o Mutter cria um monitor `Meta-N` do tamanho negociado no PipeWire, ou seja, a resolução do Deck.
 2. Diferente de uma fonte "monitor", a permissão de uma fonte virtual é **restaurada sem precisar casar um monitor existente**. Por isso o diálogo "Compartilhar tela" aparece só na primeira vez. (Com fonte "monitor", o portal compara `vendor:produto:serial`, e o Mutter dá um serial novo a cada monitor virtual; a permissão nunca seria lembrada.)
 3. Como o monitor só nasce **depois** do hook `start`, o `GnomeBackend::start()` só tira uma foto do layout (salva em `restore.json` como `{"gnome": …}`) e dispara uma *thread* que consulta o estado a cada 500 ms, por até 60 s, até surgir um monitor novo `Meta-*`/`MetaVendor`.
 4. `gnome_plan()` calcula o layout: escala suportada mais próxima da pedida, transform 1/3 para vertical, e posição **ancorada no monitor mais externo** do lado escolhido (o Mutter exige monitores adjacentes). Em *deck_only* fica só o monitor do Deck como primário. O layout é aplicado com `ApplyMonitorsConfig` no método temporário (1), sem gravar o `monitors.xml`.
@@ -412,7 +416,7 @@ Não faz nada: o Sunshine transmite a tela que já captura. É usado em GNOME, X
 - `merge_conf()` define ou remove chaves no `sunshine.conf` e preserva todas as outras linhas e comentários. `conf_values(desktop)`:
   - KDE: `capture=kwin`, `output_name=Virtual-DeckScreen`;
   - Hyprland: `capture=wlr`, `output_name=DeckScreen`;
-  - GNOME com o Sunshine do DeckScreen: `capture=portal`, `portal_virtual_display=enabled` (ou `disabled` no modo espelhar), sem `output_name`;
+  - GNOME com um Sunshine que tenha `portal_virtual_display`: `capture=portal`, `portal_virtual_display=enabled` (ou `disabled` no modo espelhar), sem `output_name`;
   - outras: não mexe na captura e remove o `output_name` do DeckScreen, se houver.
 - `merge_apps()` garante a chave `env` (sem ela o Sunshine não lê o arquivo), remove qualquer app "DeckScreen" antigo e acrescenta o novo com `prep-cmd: [{do: "<bin> hook start", undo: "<bin> hook stop"}]` e `auto-detach: true`. Os outros apps ficam intactos.
 - `configure()` faz backup (`*.deckscreen-bak.<unix>`) antes de escrever. `unconfigure()` desfaz.
@@ -451,18 +455,17 @@ As perguntas respondem **não** quando não há terminal. A pergunta destrutiva 
 - `doctor::report()` junta tudo em `~/deckscreen-relatorio-<unix>.tar.gz`: doctor, config sem segredos, variáveis de ambiente, saída de `kscreen-doctor`/`hyprctl`, journal do DeckScreen e do Sunshine, logs e arquivos do Sunshine.
 - `net.rs` usa só `ip`, `/sys/class/net`, `nmcli` e `ethtool`. O estado do WoL vem do NetworkManager e, quando ele está em `default`/`ignore`, do `ethtool` (`Wake-on: g`).
 
-### 5.9b Sunshine do DeckScreen (fork, para o GNOME)
+### 5.9b Proposta ao Sunshine oficial (`portal_virtual_display`)
 
-O fork [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine), branch `deckscreen/portal-virtual-display`, acrescenta ao Sunshine oficial cerca de 50 linhas:
+A mudança está no fork [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine), branch `feat/portal-virtual-display` (um commit, pronto para PR):
 
 | Arquivo | Mudança |
 |---|---|
 | `src/config.h` / `src/config.cpp` | opção `portal_virtual_display` (bool, padrão desligada) |
-| `src/platform/linux/portalgrab.cpp` | com a opção ligada, `SelectSources` pede `types = SOURCE_TYPE_VIRTUAL (4)` e `multiple = false`. Se o portal não informar o tamanho do stream, usa a resolução do cliente (`requested_width/height`) na negociação do PipeWire |
-| `docs/configuration.md` | documentação da opção |
-| `.github/workflows/deckscreen-appimage.yml` | reaproveita o `ci-linux.yml` do próprio Sunshine para gerar os AppImages (x86_64 e aarch64) e publica a release `deckscreen-v<data>` |
+| `src/platform/linux/portalgrab.cpp` | com a opção ligada, `SelectSources` pede `types = SOURCE_TYPE_VIRTUAL (4)` e `multiple = false`. Se o portal não informar o tamanho do stream, usa a resolução do cliente na negociação do PipeWire |
+| `docs/configuration.md`, interface web (`config_tabs.json`, `Advanced.vue`, `en.json`) | documentação e caixa de seleção na aba Avançado |
 
-O instalador baixa o AppImage mais recente desse fork para `~/Applications/Sunshine-DeckScreen.AppImage` e roda `--install`. Isso cria as regras udev do controle virtual e um serviço de usuário que tem prioridade sobre o do pacote. A ideia é propor essa mudança ao projeto oficial; se ela for aceita, o fork deixa de ser necessário.
+A mudança é **genérica**: o monitor virtual assume a resolução que o cliente Moonlight pedir (celular, tablet, notebook, TV ou Deck). O DeckScreen não depende de nenhum fork: ele detecta a opção quando ela estiver no Sunshine instalado.
 
 ### 5.9 Infraestrutura: `json.rs`, `http.rs`, `crypto.rs`, `util.rs`
 
@@ -726,6 +729,6 @@ gdbus call --session --dest org.kde.KWin --object-path /Scripting \
 - **Tela vertical** depende de como a captura do KWin entrega uma saída rotacionada: pode chegar com tarja preta ou girada. Por isso está marcada como experimental.
 - **Giroscópio:** com o Steam Input desligado, o Moonlight (SDL) precisa enxergar o controle do Deck diretamente; isso varia com a versão do SteamOS e do Flatpak.
 - **Hyprland:** a sintaxe de regras de janela mudou entre versões. O código tenta `windowrulev2` e depois `windowrule`.
-- **GNOME** depende do **Sunshine do DeckScreen** (fork com `portal_virtual_display`, §5.10). Com o Sunshine oficial, o GNOME fica no modo espelho. O GNOME também não permite mover janelas por programa, então o modo Wii U não é automático nele.
+- **GNOME** depende da opção `portal_virtual_display` no Sunshine (proposta ao projeto oficial, §5.9b). Até ela existir numa versão oficial, o GNOME fica no modo espelho. O GNOME também não permite mover janelas por programa, então o modo Wii U não é automático nele.
 - **Sunshine em Flatpak** não funciona com a captura `kwin` sem desativar uma proteção do KWin. O instalador prefere o pacote ou o AppImage.
 - **Uma sessão por vez:** a tela virtual é única (`DeckScreen`). Dois Decks ao mesmo tempo exigiriam nomes de output dinâmicos e `output_name` por sessão no Sunshine.

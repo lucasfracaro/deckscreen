@@ -252,8 +252,50 @@ pub fn conf_get(text: &str, key: &str) -> Option<String> {
         .map(|(_, v)| v.trim().to_string())
 }
 
-/// Fork of Sunshine with `portal_virtual_display` (needed on GNOME).
-pub const FORK_REPO: &str = "lucasfracaro/Sunshine";
+/// Sunshine option that makes portal capture ask the desktop for a virtual
+/// monitor (proposed upstream; needed for an extra screen on GNOME).
+pub const PORTAL_VIRTUAL_OPTION: &str = "portal_virtual_display";
+
+fn file_contains(path: &std::path::Path, needle: &[u8]) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = vec![0u8; 1 << 20];
+    let mut carry: Vec<u8> = vec![];
+    loop {
+        let n = match f.read(&mut buf) {
+            Ok(0) | Err(_) => return false,
+            Ok(n) => n,
+        };
+        carry.extend_from_slice(&buf[..n]);
+        if carry.windows(needle.len()).any(|w| w == needle) {
+            return true;
+        }
+        let keep = carry.len().saturating_sub(needle.len());
+        carry.drain(..keep);
+    }
+}
+
+/// Does the installed Sunshine know `portal_virtual_display`? Looks inside the
+/// native binary. AppImages are compressed: for those use `deckscreen-host
+/// gnome-virtual on` (config "sunshine.portal_virtual").
+pub fn supports_portal_virtual() -> bool {
+    let Some(bin) = find_binary() else { return false };
+    if bin.to_lowercase().ends_with(".appimage") {
+        return false;
+    }
+    let path = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.into());
+    file_contains(&path, PORTAL_VIRTUAL_OPTION.as_bytes())
+}
+
+/// GNOME extra-screen support: Sunshine has the option (detected) or the user
+/// opted in manually. Updates the global flag used by `display::capability`.
+pub fn refresh_gnome_virtual(d: Desktop) -> bool {
+    let on = d == Desktop::Gnome && (crate::config::peek_portal_virtual() || supports_portal_virtual());
+    crate::display::set_gnome_virtual(on);
+    on
+}
 
 /// Capture method / output name per desktop.
 /// GNOME + DeckScreen build of Sunshine: portal capture of a virtual monitor
@@ -395,6 +437,22 @@ mod tests {
         assert_eq!(conf_get(&new, "output_name").as_deref(), Some(KDE_OUTPUT));
         let removed = merge_conf(&new, &[("output_name", None)]);
         assert!(conf_get(&removed, "output_name").is_none());
+    }
+
+    #[test]
+    fn finds_option_across_chunks() {
+        let p = std::env::temp_dir().join(format!("ds-bin-{}", crate::crypto::token(4)));
+        let mut data = vec![b'x'; (1 << 20) - 5];
+        data.extend_from_slice(PORTAL_VIRTUAL_OPTION.as_bytes());
+        data.extend_from_slice(&[0u8; 100]);
+        std::fs::write(&p, &data).unwrap();
+        assert!(
+            file_contains(&p, PORTAL_VIRTUAL_OPTION.as_bytes()),
+            "needle split across 1 MB chunks"
+        );
+        std::fs::write(&p, b"nothing here").unwrap();
+        assert!(!file_contains(&p, PORTAL_VIRTUAL_OPTION.as_bytes()));
+        let _ = std::fs::remove_file(p);
     }
 
     #[test]

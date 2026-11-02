@@ -31,7 +31,7 @@ Transforma o **Steam Deck** em **segunda tela + controle** do seu PC Linux, no e
 |---|---|---|
 | **KDE Plasma 6 (Wayland)**, ex.: CachyOS, Fedora KDE, Kubuntu | ✅ completo, com widget na bandeja | ✅ |
 | **Hyprland** | 🧪 experimental | ✅ |
-| **GNOME (Wayland)**, ex.: Ubuntu, Fedora Workstation | 🧪 experimental, com o [Sunshine do DeckScreen](#gnome) | ✅ |
+| **GNOME (Wayland)**, ex.: Ubuntu, Fedora Workstation | ⏳ em breve ([veja abaixo](#gnome)) | ✅ |
 | X11 e outras | ❌ | ✅ |
 
 ## O atraso é alto?
@@ -107,12 +107,14 @@ Também aparece um "jogo" chamado **DeckScreen** na sua biblioteca da Steam: ele
 
 ### GNOME
 
-No GNOME, quem cria o monitor do Deck é o próprio GNOME, a pedido do Sunshine. Isso exige uma opção que o Sunshine oficial ainda não tem (`portal_virtual_display`). O DeckScreen usa então o **Sunshine do DeckScreen**: um fork com essa mudança, em [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine), publicado como AppImage. O instalador oferece instalá-lo quando detecta o GNOME.
+Hoje, no GNOME, o Deck **espelha a tela e funciona como controle**. Para ele virar um monitor extra, o Sunshine precisa pedir ao próprio GNOME um monitor virtual. Isso exige uma opção nova, `portal_virtual_display`, que foi **proposta ao projeto oficial do Sunshine**.
 
-- **Só na primeira conexão**, aparece no PC a janela "Compartilhar tela". Escolha **Monitor virtual**, marque **Lembrar** e clique em **Compartilhar**. Depois disso, as conexões são automáticas.
-- **Estender** e **Só no Deck** funcionam. **Espelhar** também funciona, mas trocar de ou para esse modo reinicia o Sunshine.
-- O GNOME não deixa programas moverem janelas. No modo Wii U, leve a janela para o Deck com **Super+Shift+→** ou arrastando.
-- Sem o Sunshine do DeckScreen, o Deck só espelha a tela.
+O suporte já está pronto no DeckScreen e **ativa sozinho** quando o Sunshine instalado tiver essa opção. Ao conectar:
+- o GNOME cria um monitor do tamanho do Deck, e o DeckScreen o posiciona;
+- só na primeira conexão aparece "Compartilhar tela": escolha **Monitor virtual** e marque **Lembrar**;
+- no modo Wii U, leve a janela para o Deck com **Super+Shift+→**, porque o GNOME não deixa programas moverem janelas.
+
+Para testar antes com um Sunshine compilado com a opção (por exemplo, a branch `feat/portal-virtual-display` de [lucasfracaro/Sunshine](https://github.com/lucasfracaro/Sunshine)), use `deckscreen-host gnome-virtual on`.
 
 ### Experiência Wii U com o Cemu
 

@@ -44,6 +44,7 @@ Interno
   daemon [-v]     o serviço (usado pelo systemd)
   hook start|stop chamado pelo Sunshine ao abrir/fechar o app DeckScreen
   setup           só reconfigura o Sunshine
+  gnome-virtual on|off   força o monitor extra no GNOME (Sunshine com portal_virtual_display)
   version
 ";
 
@@ -133,7 +134,7 @@ fn run(args: Vec<String>) -> i32 {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let cfg = config::Config::load_default();
-            display::set_gnome_virtual(cfg.portal_virtual());
+            sunshine::refresh_gnome_virtual(display::detect_desktop());
             match sunshine::configure(display::detect_desktop(), &exe, cfg.settings().mode == "mirror") {
                 Ok(n) => {
                     n.iter().for_each(|l| println!("  {l}"));
@@ -241,6 +242,37 @@ fn run(args: Vec<String>) -> i32 {
                 2
             }
         },
+        "gnome-virtual" => {
+            // Advanced: force/disable GNOME extra-screen mode (e.g. testing a Sunshine
+            // build with portal_virtual_display that we can't detect, like an AppImage).
+            let mut cfg = config::Config::load_default();
+            match rest.first().map(String::as_str) {
+                Some("on") | Some("off") => {
+                    cfg.set_portal_virtual(rest[0] == "on");
+                    let d = display::detect_desktop();
+                    let on = sunshine::refresh_gnome_virtual(d);
+                    let exe = std::env::current_exe()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if d == display::Desktop::Gnome {
+                        let _ = sunshine::configure(d, &exe, cfg.settings().mode == "mirror");
+                    }
+                    println!(
+                        "GNOME monitor extra: {}. Reinicie: systemctl --user restart deckscreen-host (e o Sunshine)",
+                        if on { "ativado" } else { "desativado" }
+                    );
+                    0
+                }
+                _ => {
+                    println!(
+                        "forçado: {} · detectado no Sunshine: {}\nuso: deckscreen-host gnome-virtual on|off",
+                        cfg.portal_virtual(),
+                        sunshine::supports_portal_virtual()
+                    );
+                    0
+                }
+            }
+        }
         "version" | "--version" | "-V" => {
             println!("deckscreen-host {VERSION}");
             0

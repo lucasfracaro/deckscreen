@@ -41,6 +41,7 @@ fn user_service_active(unit: &str) -> bool {
 }
 
 pub fn checks(desktop: Desktop) -> Vec<Check> {
+    sunshine::refresh_gnome_virtual(desktop);
     let mut v = vec![];
     let cap = display::capability(desktop);
     v.push(c(
@@ -84,15 +85,17 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
                 "não instalado: o Deck só espelha. Rode 'deckscreen-host install' para instalar",
             )
         });
-        v.push(if crate::install::has_pygobject() {
-            c("PyGObject (posicionar o monitor)", "ok", "python3-gi")
-        } else {
-            c(
-                "PyGObject (posicionar o monitor)",
-                "fail",
-                "instale python3-gi / python-gobject",
-            )
-        });
+        if display::gnome_virtual() {
+            v.push(if crate::install::has_pygobject() {
+                c("PyGObject (posicionar o monitor)", "ok", "python3-gi")
+            } else {
+                c(
+                    "PyGObject (posicionar o monitor)",
+                    "fail",
+                    "instale python3-gi / python-gobject",
+                )
+            });
+        }
     }
     if desktop == Desktop::Hyprland {
         v.push(tool("hyprctl", "hyprctl", "hyprland", true));

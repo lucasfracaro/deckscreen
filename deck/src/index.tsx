@@ -347,7 +347,7 @@ function Content() {
   if (st) {
     if (capability === "mirror") {
       warnings.push(st.desktop === "gnome"
-        ? "Este PC (GNOME) só espelha: para o Deck virar monitor extra, rode 'deckscreen-host install' no PC e aceite instalar o Sunshine do DeckScreen."
+        ? "No GNOME o Deck espelha a tela por enquanto. Virar monitor extra depende de uma opção proposta ao Sunshine oficial; quando ela sair, o DeckScreen ativa sozinho."
         : `Este PC (${st.desktop}) só espelha a tela: para virar monitor extra use KDE Plasma Wayland, GNOME ou Hyprland.`);
     }
     if (st.diagnostics.desktop === "kde" && !st.diagnostics.krfb) warnings.push("PC sem o pacote krfb (tela virtual).");
