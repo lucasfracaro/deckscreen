@@ -208,42 +208,59 @@ const setPair = (p: PairState) => { pairState = p; notify(); };
 const setWake = (w: string) => { wakeState = w; notify(); };
 
 async function runPairing(): Promise<void> {
-  const r = await call<{ ok: boolean; pin: string; request_id: string; launch_options: string; error?: string }>("pair_start");
+  const r = await call<{ ok: boolean; pin: string; request_id: string; launch_options: string; moonlight_paired?: boolean; error?: string }>("pair_start");
   if (!r.ok) { toast("DeckScreen", r.error || "Falha ao pedir pareamento"); return; }
   setPair({ pin: r.pin, requestId: r.request_id, state: "pending" });
-  toast("Aceite no PC", `Confira o PIN ${r.pin} na notificação do PC e clique em Aceitar. A janela do Moonlight que abrir agora é só do pareamento e fecha sozinha.`);
+  toast("Aceite no PC", `Confira o PIN ${r.pin} na notificação do PC e clique em Aceitar.`);
 
-  const appId = await prepareShortcut();
-  if (appId) await launchShortcut(appId, r.launch_options);   // Moonlight: pair <ip> --pin XXXX
-
+  // 1) wait for the PC's OK first: Moonlight only opens once there is something to finish
   const deadline = Date.now() + 3 * 60 * 1000;
-  let accepted = false;
-  while (Date.now() < deadline) {
+  let state = "pending";
+  while (Date.now() < deadline && state === "pending") {
     await sleep(1500);
     const st = await call<{ ok: boolean; state?: string; sunshine?: string }>("pair_status", r.request_id);
-    if (!st.ok) continue;
-    setPair({ pin: r.pin, requestId: r.request_id, state: st.state || "pending", sunshine: st.sunshine });
-    if (st.state === "denied") { toast("DeckScreen", "O PC recusou o pareamento."); break; }
-    if (st.state === "approved" && !accepted) { accepted = true; toast("DeckScreen", "PC aceitou! Finalizando com o Moonlight…"); }
-    if (accepted && st.sunshine && st.sunshine !== "waiting") {
-      toast("DeckScreen", st.sunshine === "ok"
-        ? "Pareado! Agora toque em Conectar no menu do DeckScreen (⋯ → Decky)."
-        : "O Moonlight não confirmou o PIN. Se ele já estava pareado, pode ignorar; senão tente de novo.");
-      await sleep(2500);
-      if (appId) {
-        terminateShortcut(appId);
-        // From now on the "DeckScreen" tile in the library connects (instead of pairing again).
-        const opts = await call<string>("stream_launch_options");
-        if (opts) {
-          SteamClient.Apps.SetAppLaunchOptions(appId, opts);
-          await waitDetails(appId, (d) => d.strLaunchOptions === opts);
-        }
-      }
-      break;
+    if (st.ok && st.state) state = st.state;
+    setPair({ pin: r.pin, requestId: r.request_id, state, sunshine: st.sunshine });
+  }
+  if (state !== "approved") {
+    toast("DeckScreen", state === "denied" ? "O PC recusou o pareamento." : "Tempo esgotado. Tente parear de novo.");
+    setPair(null);
+    return;
+  }
+
+  // 2) Moonlight: pair only if it isn't already (re-pairing a known PC fails with "already paired")
+  let moonlightOk = !!r.moonlight_paired;
+  const appId = await prepareShortcut();
+  if (!moonlightOk && appId) {
+    toast("DeckScreen", "PC aceitou! Finalizando com o Moonlight…");
+    await launchShortcut(appId, r.launch_options);   // Moonlight: pair <ip> --pin XXXX
+    const until = Date.now() + 100 * 1000;
+    while (Date.now() < until) {
+      await sleep(1500);
+      const st = await call<{ ok: boolean; state?: string; sunshine?: string }>("pair_status", r.request_id);
+      setPair({ pin: r.pin, requestId: r.request_id, state: "approved", sunshine: st.sunshine });
+      if (st.sunshine && st.sunshine !== "waiting") { moonlightOk = st.sunshine === "ok"; break; }
+    }
+    await sleep(2000);
+    terminateShortcut(appId);
+    await sleep(1500);
+  }
+  setPair(null);
+
+  // 3) from now on the "DeckScreen" tile connects; and connect right away
+  if (appId) {
+    const opts = await call<string>("stream_launch_options");
+    if (opts) {
+      SteamClient.Apps.SetAppLaunchOptions(appId, opts);
+      await waitDetails(appId, (d) => d.strLaunchOptions === opts);
     }
   }
-  if (!accepted && Date.now() >= deadline) toast("DeckScreen", "Tempo esgotado. Tente parear de novo.");
-  setPair(null);
+  if (!moonlightOk) {
+    toast("DeckScreen", "O Moonlight não confirmou o PIN. Tente parear de novo.");
+    return;
+  }
+  toast("DeckScreen", "Pareado! Conectando…");
+  await connect(true);
 }
 
 async function wakeAndWait(): Promise<boolean> {
@@ -254,8 +271,11 @@ async function wakeAndWait(): Promise<boolean> {
   return r.ok;
 }
 
-async function connect(online: boolean): Promise<void> {
-  if (!online) {
+async function connect(_online: boolean): Promise<void> {
+  // Always ask the network, not the last status poll: after a drop the panel may still say "off".
+  const reach = await call<{ ok: boolean; reason?: string }>("reach_host");
+  if (!reach.ok) {
+    if (reach.reason === "deck_offline") { toast("DeckScreen", "O Deck está sem rede. Reconecte o Wi-Fi e tente de novo."); return; }
     const s = await call<DeckSettings>("get_settings");
     if (!s.host?.mac) { toast("DeckScreen", "O PC está desligado ou fora da rede."); return; }
     if (!(await wakeAndWait())) return;
@@ -341,8 +361,12 @@ function Content() {
   const refresh = async () => {
     const ns = await call<DeckSettings>("get_settings");
     setS(ns);
-    if (ns.host && ns.host.paired) setStatus(await call<Result<HostStatus>>("host_status"));
-    else setStatus(null);
+    if (ns.host && ns.host.paired) {
+      let st = await call<Result<HostStatus>>("host_status");
+      if (!st.ok && (await call<{ ok: boolean; moved?: boolean }>("reach_host")).moved)
+        st = await call<Result<HostStatus>>("host_status");
+      setStatus(st);
+    } else setStatus(null);
     setMotion(ns.motion === "off" ? null : await call<MotionStatus>("motion_status"));
   };
 

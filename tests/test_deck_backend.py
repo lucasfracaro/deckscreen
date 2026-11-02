@@ -73,3 +73,25 @@ class SettingsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MoonlightPairedTests(unittest.TestCase):
+    CONF = (
+        "[General]\nlatestsupportedversion-v1=1\n\n[hosts]\n"
+        "1\\hostname=nitro\n1\\localaddress=192.168.5.105\n1\\srvcert=@ByteArray(-----BEGIN CERTIFICATE-----x)\n"
+        "2\\hostname=old\n2\\manualaddress=10.0.0.2:47989\n2\\srvcert=@ByteArray()\nsize=2\n"
+    )
+
+    def test_parse_and_match(self):
+        import tempfile
+        hosts = main.moonlight_hosts(self.CONF)
+        self.assertEqual([h["paired"] for h in hosts], [True, False])
+        with tempfile.TemporaryDirectory() as home:
+            self.assertFalse(main.moonlight_paired("192.168.5.105", "nitro", home))   # no Moonlight config yet
+            path = os.path.join(home, main.MOONLIGHT_CONF)
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as f:
+                f.write(self.CONF)
+            self.assertTrue(main.moonlight_paired("192.168.5.105", "", home))
+            self.assertTrue(main.moonlight_paired("192.168.5.200", "NITRO", home))    # new IP, same name
+            self.assertFalse(main.moonlight_paired("10.0.0.2", "old", home))          # known but not paired

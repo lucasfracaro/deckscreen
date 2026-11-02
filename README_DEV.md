@@ -143,20 +143,23 @@ sequenceDiagram
   PY->>D: POST /api/pair/request {device_id, device_name, pin}
   D->>N: notificação "Deck quer se conectar — PIN 1234" [Aceitar|Recusar]
   D-->>PY: {request_id}
-  UI->>ML: atalho Steam: flatpak run … pair <ip> --pin 1234
-  ML->>S: pedido de pareamento GameStream (PIN 1234)
+  PY-->>UI: PIN, opções do pair, moonlight_paired (lido do Moonlight.conf)
+  loop a cada 1,5 s (até 3 min), até sair de "pending"
+    UI->>PY: pair_status(request_id)
+    PY->>D: GET /api/pair/status?id=…
+  end
   U->>N: clica Aceitar
   N-->>D: stdout "accept"
   D->>D: cria chave de 256 bits, salva o device em config.json
-  D->>S: GET /api/pin → pairing_id; POST /api/pin {pairing_id, pin, name}
-  S-->>ML: pareamento GameStream concluído
-  loop a cada 1,5 s (até 3 min)
-    UI->>PY: pair_status(request_id)
-    PY->>D: GET /api/pair/status?id=…
-    D-->>PY: {state:"approved", key, sunshine:"ok"}
+  D->>S: (por até 90 s) GET /api/pin → pairing_id; POST /api/pin {pairing_id, pin, name}
+  alt Moonlight ainda não pareado com este PC
+    UI->>ML: atalho Steam: flatpak run … pair <ip> --pin 1234
+    ML->>S: pedido de pareamento GameStream (PIN 1234)
+    S-->>ML: pareamento GameStream concluído
+    UI->>ML: TerminateApp (fecha a janela de pareamento)
   end
   PY->>PY: guarda a chave em settings.json
-  UI->>ML: TerminateApp (fecha a janela de pareamento)
+  UI->>ML: atalho passa a usar "stream" e conecta sozinho
 ```
 
 Detalhes importantes:
@@ -167,6 +170,7 @@ Detalhes importantes:
   - **antiga:** `POST {pin, name}` direto.
 
   Ele tenta de novo a cada 1,5 s por até 90 s, porque o Moonlight pode demorar a iniciar o pedido.
+- **O Moonlight só abre depois do "Aceitar".** Abrir antes deixava a janela do Moonlight esperando a pessoa ir até o PC, e um erro nela fechava o app. Se o `Moonlight.conf` (Flatpak) já tem esse PC com certificado (`moonlight_paired`: mesmo IP ou mesmo nome), o passo do Moonlight é pulado: parear de novo daria "already paired". No fim o plugin conecta sozinho.
 - Sem `notify-send`, a aprovação é feita pelo widget do Plasma (`/ui/decide`) ou por `deckscreen-host accept`.
 
 ### 3.3 Conexão (a tela do Deck nasce e morre)
@@ -506,7 +510,8 @@ Cada `async def` da classe `Plugin` vira uma chamada `call("nome", …)` na inte
 | `discover` / `add_host` / `select_host` / `forget_host` | Lista de PCs. `forget_host` também chama `/api/unpair` |
 | `pair_start` / `pair_status` | §3.2. `pair_start` já devolve as opções de lançamento do Moonlight para o `pair` |
 | `host_status` / `host_update_settings` / `host_stop` / `host_doctor` | Rotas assinadas. `host_status` guarda MAC, cabo/Wi-Fi e capacidade do PC. Um 401 apaga a chave, exceto quando o erro é de relógio |
-| `wake_host` | §3.4 |
+| `reach_host` | Antes de conectar: tenta o IP salvo (`/api/hello`, 2 s); se falhar, distingue Deck sem rede (`nmcli -t -f STATE general`) de PC fora do ar, e procura o PC pelo nome na busca UDP, atualizando o IP se o DHCP mudou. Também é usado quando o status falha |
+| `wake_host` | §3.4. Não manda Wake-on-LAN se o próprio Deck está sem rede |
 | `test_connection` | `tcp_rtt` (20 *handshakes* TCP com timeout de 1 s: mede o RTT sem precisar de root, ao contrário do ICMP), `deck_network` (via `nmcli`: cabo no dock ou Wi-Fi com faixa, sinal e taxa) e `verdict` (dicas) |
 | `stream_launch_options` | Monta a linha do Moonlight (§6.4) |
 | `controller_layout` | Instala os layouts em `controller_base/templates` e diz qual usar (`template://controller_neptune_deckscreen_desktop.vdf` ou `_game.vdf`), pelo perfil do PC no modo `auto` |

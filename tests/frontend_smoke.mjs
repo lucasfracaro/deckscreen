@@ -76,13 +76,14 @@ const backend = {
   discover: () => [{ ip: "192.168.0.10", port: 47555, name: "cachyos-pc", capability: "virtual" }],
   add_host: (ip, port) => { be.hosts["cachyos-pc"] = { ip, port, name: "cachyos-pc", paired: false, mac: "", wired: null, capability: "virtual" }; be.active = "cachyos-pc"; return { ok: true, id: "cachyos-pc" }; },
   select_host: (id) => { be.active = id; return true; },
-  pair_start: () => ({ ok: true, pin: "1234", request_id: "r1", launch_options: "run com.moonlight_stream.Moonlight pair 192.168.0.10 --pin 1234" }),
+  pair_start: () => ({ ok: true, pin: "1234", request_id: "r1", launch_options: "run com.moonlight_stream.Moonlight pair 192.168.0.10 --pin 1234", moonlight_paired: false }),
   pair_status: () => {
     be.polls++;
     const ok = be.polls >= 2;
     if (ok) Object.assign(be.hosts["cachyos-pc"], { paired: true, mac: "aa:bb:cc:dd:ee:ff", wired: true });
-    return { ok: true, state: ok ? "approved" : "pending", sunshine: ok ? "ok" : "waiting" };
+    return { ok: true, state: ok ? "approved" : "pending", sunshine: be.polls >= 3 ? "ok" : "waiting" };
   },
+  reach_host: () => be.deckOffline ? { ok: false, reason: "deck_offline" } : be.online ? { ok: true } : { ok: false, reason: "pc_offline" },
   host_status: () => be.online
     ? { ok: true, code: 200, data: { name: "cachyos-pc", version: "2.0.0", capability: "virtual", desktop: "kde", settings: be.hostSettings,
         display: { active: false, output: null, last_error: null, session: null },
@@ -180,12 +181,15 @@ await click("Parear com este PC");
 await tick(200);
 tree = await render();
 assert.ok(text({ kids: tree }).includes("1234"), "PIN shown while pairing");
-await tick(5200);
+assert.ok(!log.some((l) => l.includes("Moonlight pair")), "Moonlight is not opened before the PC accepts");
+await tick(11000);
 tree = await render();
 assert.ok(log.includes("add:/usr/bin/flatpak"), "shortcut created");
 assert.ok(log.some((l) => l.startsWith("opts:run com.moonlight_stream.Moonlight pair")), "pair launch options");
 assert.ok(log.includes("terminate:1234567"), "moonlight pair window closed after success");
 assert.ok(log.includes("steaminput:1"), "Steam Input left on by default");
+assert.ok(log.some((l) => l.includes("stream 192.168.0.10 DeckScreen")) && log.filter((l) => l.startsWith("run:")).length === 2,
+  "after pairing it connects by itself (pair run + stream run)");
 // connect
 tree = await click("Conectar");
 assert.ok(log.some((l) => l.includes("stream 192.168.0.10 DeckScreen")), "stream options set");
@@ -241,6 +245,10 @@ be.online = false;
 tree = await render();
 await tick(4200);
 tree = await render();
+be.deckOffline = true;
+tree = await click("Ligar o PC e conectar");
+assert.ok(!log.includes("wake"), "no wake-on-lan while the Deck itself has no network");
+be.deckOffline = false;
 tree = await click("Ligar o PC e conectar");
 await tick(3500);
 assert.ok(log.includes("wake"), "wake-on-lan sent");

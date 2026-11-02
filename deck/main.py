@@ -196,6 +196,60 @@ def _discover(timeout: float = 2.0) -> list:
     return sorted(found.values(), key=lambda h: h["name"])
 
 
+# ------------------------------------------------------------------ Moonlight pairing state
+
+MOONLIGHT_CONF = os.path.join(".var", "app", MOONLIGHT_ID, "config", "Moonlight Game Streaming Project",
+                              "Moonlight.conf")
+
+
+def moonlight_hosts(text: str) -> list:
+    """Hosts from Moonlight.conf (QSettings INI: [hosts] 1\\hostname=..., 1\\srvcert=...)."""
+    hosts, section = {}, ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            continue
+        if section != "hosts" or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        m = re.match(r"(\d+)\\(\w+)$", key)
+        if m:
+            hosts.setdefault(m.group(1), {})[m.group(2)] = val.strip().strip('"')
+    out = []
+    for h in hosts.values():
+        cert = h.get("srvcert", "")
+        addrs = {h.get(k, "").rsplit(":", 1)[0].strip("[]") for k in
+                 ("localaddress", "manualaddress", "remoteaddress", "ipv6address", "address") if h.get(k)}
+        out.append({"name": h.get("hostname", ""), "addresses": sorted(a for a in addrs if a),
+                    "paired": bool(cert) and cert not in ("@ByteArray()", "@Invalid()")})
+    return out
+
+
+def moonlight_paired(ip: str, name: str, home: str = "") -> bool:
+    """Is Moonlight (Flatpak) already paired with this PC? Re-pairing would fail with "already paired"."""
+    path = os.path.join(home or os.path.expanduser("~"), MOONLIGHT_CONF)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+    return any(h["paired"] and (ip in h["addresses"] or (name and h["name"].lower() == name.lower()))
+               for h in moonlight_hosts(text))
+
+
+def deck_online():
+    """False only when NetworkManager says the Deck has no network; None if unknown."""
+    try:
+        p = _run(["nmcli", "-t", "-f", "STATE", "general"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    state = p.stdout.strip().lower()
+    if not state:
+        return None
+    return state.startswith("connected") or state.startswith("conectado")
+
+
 # ------------------------------------------------------------------ Wake-on-LAN
 
 def magic_packet(mac: str) -> bytes:
@@ -395,7 +449,31 @@ class Plugin:
         if not res["ok"]:
             return {"ok": False, "error": res["error"]}
         return {"ok": True, "pin": pin, "request_id": res["data"]["request_id"],
-                "launch_options": self._moonlight_cmd(["pair", h["ip"], "--pin", pin])}
+                "launch_options": self._moonlight_cmd(["pair", h["ip"], "--pin", pin]),
+                "moonlight_paired": moonlight_paired(h["ip"], h.get("name", ""), decky.DECKY_USER_HOME)}
+
+    async def reach_host(self):
+        """Find the active PC before connecting: its last IP, else a new IP found by name
+        (DHCP), and tell a Deck without network apart from a PC that is off."""
+        s = _load()
+        h = _active(s)
+        if not h:
+            return {"ok": False, "reason": "no_host"}
+        res = await asyncio.to_thread(_http, "GET", h, "/api/hello", None, "", "", 2)
+        if res["ok"]:
+            return {"ok": True, "ip": h["ip"]}
+        if await asyncio.to_thread(deck_online) is False:
+            return {"ok": False, "reason": "deck_offline"}
+        for f in await asyncio.to_thread(_discover):
+            if f["name"] == h.get("name") or f["name"] == s["active"]:
+                s = _load()
+                hh = _active(s)
+                if hh is not None:
+                    hh["ip"], hh["port"] = f["ip"], f["port"]
+                    _save(s)
+                decky.logger.info(f"PC encontrado em outro IP: {f['ip']}")
+                return {"ok": True, "ip": f["ip"], "moved": True}
+        return {"ok": False, "reason": "pc_offline"}
 
     async def pair_status(self, request_id: str):
         s = _load()
@@ -456,6 +534,8 @@ class Plugin:
         h = _active(s)
         if not h or not h.get("mac"):
             return {"ok": False, "error": "MAC do PC desconhecido: conecte uma vez com o PC ligado (e no cabo)."}
+        if await asyncio.to_thread(deck_online) is False:
+            return {"ok": False, "error": "O Deck está sem rede. Reconecte o Wi-Fi e tente de novo."}
         await asyncio.to_thread(_send_wol, h["mac"], h["ip"])
         deadline = time.monotonic() + wait_seconds
         while time.monotonic() < deadline:

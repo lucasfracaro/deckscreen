@@ -7,7 +7,7 @@
         "Id": "org.deckscreen.status",
         "License": "MIT",
         "Name": "DeckScreen",
-        "Version": "2.3.2",
+        "Version": "2.4.0",
         "Website": "https://github.com/lucasfracaro/deckscreen"
     },
     "KPackageStructure": "Plasma/Applet",
