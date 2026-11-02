@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Rust estático (musl)
         run: |
@@ -20,7 +20,7 @@ jobs:
           rustup toolchain install stable --profile minimal && rustup default stable
           rustup target add x86_64-unknown-linux-musl
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -36,12 +36,13 @@ jobs:
           ./build.sh
 
       - name: Publicar a release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: DeckScreen ${{ steps.ver.outputs.tag }}
           files: release/*
+          overwrite_files: true
           generate_release_notes: true
           body: |
             ## Como instalar
