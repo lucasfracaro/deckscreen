@@ -490,16 +490,16 @@ A mudança é **genérica**: o monitor virtual assume a resolução que o client
   - execução de processos;
   - perguntas no terminal.
 
----
-
-## 6. Plugin do Steam Deck (Decky)
-
 ### Atualizações do Sunshine (`updates.rs`)
 
 - `installed()` descobre como o Sunshine foi instalado, sem rede: AppImage em `~/Applications` (versão gravada em `~/.local/share/deckscreen/Sunshine.AppImage.version` no download), ou o pacote dono do binário (`pacman -Qqo`), que é **repo** se `pacman -Si` o conhece e **AUR** se não.
 - `check()` busca a versão mais nova: repo → `checkupdates` (base de dados própria, sem root; saída 2 = nada novo), com `pacman -Si` como alternativa; AUR → RPC v5 do AUR; AppImage → `releases/latest` do GitHub. O resultado fica em `~/.local/share/deckscreen/sunshine-update.json` por 6 h ou até a versão instalada mudar. `cmp_versions` compara só os números (`v2026.1.0`, `2025.924.154138-2`).
 - O daemon verifica 90 s depois de iniciar e a cada 6 h; o `status` leva `sunshine_update` (só do cache, sem rede) e o plugin mostra o aviso. O `doctor` mostra a linha "Atualização do Sunshine".
 - `update-sunshine`: repo → `sudo pacman -Syu` (no Arch não se atualiza um pacote isolado); AUR → `paru`/`yay -Syu`; AppImage → baixa de novo. Depois reinicia o serviço do Sunshine.
+
+---
+
+## 6. Plugin do Steam Deck (Decky)
 
 ### 6.1 Como o Decky carrega o plugin
 
