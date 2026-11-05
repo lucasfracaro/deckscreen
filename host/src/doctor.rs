@@ -117,6 +117,9 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         )),
         None => v.push(c("Sunshine instalado", "fail", "não encontrado")),
     }
+    if let Some((status, detail)) = crate::updates::doctor_line() {
+        v.push(c("Atualização do Sunshine", status, detail));
+    }
     match sunshine::service_name() {
         Some(s) => v.push(c(
             "Serviço do Sunshine",

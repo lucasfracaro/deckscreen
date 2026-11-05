@@ -95,3 +95,41 @@ class MoonlightPairedTests(unittest.TestCase):
             self.assertTrue(main.moonlight_paired("192.168.5.105", "", home))
             self.assertTrue(main.moonlight_paired("192.168.5.200", "NITRO", home))    # new IP, same name
             self.assertFalse(main.moonlight_paired("10.0.0.2", "old", home))          # known but not paired
+
+
+class MoonlightUpdateTests(unittest.TestCase):
+    INFO = ("\nMoonlight - Stream games from your PC\n\n          ID: com.moonlight_stream.Moonlight\n"
+            "         Ref: app/com.moonlight_stream.Moonlight/x86_64/stable\n     Version: {v}\n"
+            "Installation: user\n")
+
+    def test_check_and_update(self):
+        import asyncio
+        import subprocess
+        state = {"v": "6.1.0"}
+        calls = []
+
+        def fake_run(cmd, timeout=60):
+            calls.append(cmd)
+            if cmd[:2] == ["flatpak", "info"]:
+                return subprocess.CompletedProcess(cmd, 0, self.INFO.format(v=state["v"]), "")
+            if cmd[:2] == ["flatpak", "remote-ls"]:
+                out = "com.moonlight_stream.Moonlight\t6.2.0\n" if state["v"] == "6.1.0" else ""
+                return subprocess.CompletedProcess(cmd, 0, out, "")
+            if cmd[:2] == ["flatpak", "update"]:
+                state["v"] = "6.2.0"
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            raise AssertionError(cmd)
+
+        orig = main._run
+        main._run = fake_run
+        try:
+            p = main.Plugin()
+            main.Plugin._ml_update_cache = {"t": 0.0, "data": None}
+            u = asyncio.run(p.moonlight_update_check())
+            self.assertEqual((u["current"], u["latest"], u["available"]), ("6.1.0", "6.2.0", True))
+            self.assertIn("--user", calls[-1])
+            r = asyncio.run(p.update_moonlight())
+            self.assertEqual((r["before"], r["after"], r["changed"]), ("6.1.0", "6.2.0", True))
+            self.assertFalse(asyncio.run(p.moonlight_update_check(True))["available"])
+        finally:
+            main._run = orig

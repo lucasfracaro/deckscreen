@@ -465,13 +465,13 @@ impl KdeBackend {
                 let layout = self
                     .ks
                     .outputs()
-                    .map(|o| plan_layout(&o, &out, &s.position))
+                    .map(|o| plan_layout(&o, out, &s.position))
                     .unwrap_or_default();
                 let mut ops = vec![format!("output.{out}.enable")];
                 ops.extend(layout.iter().map(|(n, x, y)| format!("output.{n}.position.{x},{y}")));
                 self.ks.apply(&ops);
                 if !p.rules.is_empty() {
-                    self.load_rules(&out, &p.rules, p.fullscreen);
+                    self.load_rules(out, &p.rules, p.fullscreen);
                 }
             }
         }

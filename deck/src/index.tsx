@@ -50,6 +50,7 @@ interface HostStatus {
   diagnostics: { krfb: boolean; kscreen: boolean; wayland: boolean; sunshine_api: boolean; desktop: string; capability: string };
   network?: { mac?: string; wired?: boolean; wol?: string; ip?: string };
   name: string; version: string; capability: string; desktop: string;
+  sunshine_update?: { current: string; latest: string; how: string };
 }
 interface Result<T> { ok: boolean; code?: number; data?: T; error?: string }
 interface TestResult {
@@ -346,6 +347,7 @@ function Content() {
   const [s, setS] = useState(null as DeckSettings | null);
   const [status, setStatus] = useState(null as Result<HostStatus> | null);
   const [moonlight, setMoonlight] = useState(null as boolean | null);
+  const [mlUpdate, setMlUpdate] = useState(null as { current?: string; latest?: string; available?: boolean } | null);
   const [busy, setBusy] = useState("");
   const [found, setFound] = useState(null as Found[] | null);
   const [ip, setIp] = useState("");
@@ -372,7 +374,10 @@ function Content() {
 
   useEffect(() => {
     refresh();
-    call<{ installed: boolean }>("moonlight_status").then((m) => setMoonlight(m.installed));
+    call<{ installed: boolean }>("moonlight_status").then((m) => {
+      setMoonlight(m.installed);
+      if (m.installed) call<any>("moonlight_update_check").then((u) => u && u.ok && setMlUpdate(u));
+    });
     const l = () => force((n: number) => n + 1);
     listeners.add(l);
     const t = setInterval(refresh, 4000);
@@ -398,6 +403,17 @@ function Content() {
   };
 
   // ---------- Moonlight
+  const updateMoonlight = () => withBusy("ml-update", async () => {
+    toast("DeckScreen", "Atualizando o Moonlight… pode levar alguns minutos.");
+    const r = await call<{ ok: boolean; error?: string; before?: string; after?: string; changed?: boolean }>("update_moonlight");
+    if (!r.ok) { toast("DeckScreen", r.error || "Falha ao atualizar o Moonlight"); return; }
+    toast("DeckScreen", r.changed ? `Moonlight atualizado: ${r.before} → ${r.after}` : `O Moonlight já está na versão mais nova (${r.after}).`);
+    setMlUpdate({ current: r.after, available: false });
+  });
+  const moonlightUpdate = moonlight && mlUpdate?.available && h(PanelSection, { title: "Moonlight" },
+    h(Row, null, h(Note, null, `Atualização disponível: ${mlUpdate.current || "?"} → ${mlUpdate.latest}`)),
+    h(Btn, { label: busy === "ml-update" ? "Atualizando…" : "Atualizar Moonlight", disabled: !!busy || !!status?.data?.display.active, onClick: updateMoonlight }),
+  );
   const moonlightSection = moonlight === false && h(PanelSection, { title: "Moonlight" },
     h(Row, null, h(Note, null, "O DeckScreen usa o Moonlight para receber a tela do PC. Ele ainda não está instalado.")),
     h(Btn, {
@@ -418,7 +434,7 @@ function Content() {
       else { setAdding(false); setFound(null); setIp(""); await refresh(); }
     });
     return h(Fragment, null,
-      moonlightSection,
+      moonlightSection, moonlightUpdate,
       h(PanelSection, { title: s.hosts.length ? "Adicionar PC" : "1. Escolha o PC" },
         h(Row, null, h(Note, null, "Instale o DeckScreen no PC (AppImage ou install.sh) e deixe-o ligado na mesma rede.")),
         h(Btn, {
@@ -445,7 +461,7 @@ function Content() {
   if (!host.paired) {
     const pair = pairState;
     return h(Fragment, null,
-      moonlightSection,
+      moonlightSection, moonlightUpdate,
       h(PanelSection, { title: "2. Parear" },
         pcPicker,
         h(Row, null, h(Field, { label: host.name, description: host.ip })),
@@ -494,7 +510,7 @@ function Content() {
     : (wakeState || status.error || "Offline");
 
   return h(Fragment, null,
-    moonlightSection,
+    moonlightSection, moonlightUpdate,
     h(PanelSection, { title: "PC" },
       pcPicker,
       h(Row, null, h(Field, { label: st ? st.name : host.name, description: statusLine })),
@@ -573,6 +589,16 @@ function Content() {
       }),
       h(Drop, { label: "Giroscópio", options: MOTION_OPTS, value: s.motion, onChange: (v) => updateDeck({ motion: v }) }),
       motion && h(Row, null, h(Note, null, describeMotion(motion))),
+      moonlight && !mlUpdate?.available && h(Btn, {
+        label: busy === "ml-check" ? "Procurando…" : `Moonlight ${mlUpdate?.current || ""}: procurar atualização`.replace("  ", " "),
+        disabled: !!busy,
+        onClick: () => withBusy("ml-check", async () => {
+          const u = await call<any>("moonlight_update_check", true);
+          if (!u.ok) { toast("DeckScreen", u.error || "Não consegui consultar o Flathub"); return; }
+          setMlUpdate(u);
+          if (!u.available) toast("DeckScreen", `O Moonlight já está na versão mais nova (${u.current}).`);
+        }),
+      }),
       h(Toggle, { label: "Opções de vídeo", checked: showVideo, onChange: setShowVideo }),
       showVideo && h(Fragment, null,
         h(Drop, { label: "Codec", options: CODEC_OPTS, value: s.codec, onChange: (v) => updateDeck({ codec: v }) }),
@@ -589,6 +615,8 @@ function Content() {
         onClick: () => withBusy("test", async () => setTest(await call<TestResult>("test_connection"))),
       }),
       test && h(Row, null, h(Note, null, test.ok ? describeTest(test) : test.error)),
+      st?.sunshine_update && h(Row, null, h(Note, { color: "#ffb347" },
+        `Sunshine ${st.sunshine_update.current} → ${st.sunshine_update.latest} disponível. No PC, rode: ${st.sunshine_update.how}`)),
       h(Btn, {
         label: busy === "doctor" ? "Verificando…" : "Diagnóstico do PC", disabled: !!busy || !online,
         onClick: () => withBusy("doctor", async () => {

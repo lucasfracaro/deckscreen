@@ -82,6 +82,7 @@ deckscreen/
 │   │   ├── install.rs            install/uninstall para qualquer distro
 │   │   ├── doctor.rs             diagnóstico e relatório
 │   │   ├── input.rs              controle virtual: /dev/uinput, /dev/uhid, regra udev, grupo input
+│   │   ├── updates.rs            versão nova do Sunshine (repo, AUR ou AppImage) e update-sunshine
 │   │   ├── net.rs                interface, MAC, cabo/Wi-Fi, estado do Wake-on-LAN
 │   │   ├── http.rs               servidor e cliente HTTP/1.1 mínimos
 │   │   ├── json.rs               tipo JSON, parser e serializador
@@ -493,6 +494,13 @@ A mudança é **genérica**: o monitor virtual assume a resolução que o client
 
 ## 6. Plugin do Steam Deck (Decky)
 
+### Atualizações do Sunshine (`updates.rs`)
+
+- `installed()` descobre como o Sunshine foi instalado, sem rede: AppImage em `~/Applications` (versão gravada em `~/.local/share/deckscreen/Sunshine.AppImage.version` no download), ou o pacote dono do binário (`pacman -Qqo`), que é **repo** se `pacman -Si` o conhece e **AUR** se não.
+- `check()` busca a versão mais nova: repo → `checkupdates` (base de dados própria, sem root; saída 2 = nada novo), com `pacman -Si` como alternativa; AUR → RPC v5 do AUR; AppImage → `releases/latest` do GitHub. O resultado fica em `~/.local/share/deckscreen/sunshine-update.json` por 6 h ou até a versão instalada mudar. `cmp_versions` compara só os números (`v2026.1.0`, `2025.924.154138-2`).
+- O daemon verifica 90 s depois de iniciar e a cada 6 h; o `status` leva `sunshine_update` (só do cache, sem rede) e o plugin mostra o aviso. O `doctor` mostra a linha "Atualização do Sunshine".
+- `update-sunshine`: repo → `sudo pacman -Syu` (no Arch não se atualiza um pacote isolado); AUR → `paru`/`yay -Syu`; AppImage → baixa de novo. Depois reinicia o serviço do Sunshine.
+
 ### 6.1 Como o Decky carrega o plugin
 
 - O `package.json` com `"type": "module"` faz o Decky importar `dist/index.js` como **módulo ES**, chamar o `default export` e usar o objeto devolvido (`name`, `titleView`, `content`, `icon`, `onDismount`).
@@ -510,6 +518,7 @@ Cada `async def` da classe `Plugin` vira uma chamada `call("nome", …)` na inte
 | `discover` / `add_host` / `select_host` / `forget_host` | Lista de PCs. `forget_host` também chama `/api/unpair` |
 | `pair_start` / `pair_status` | §3.2. `pair_start` já devolve as opções de lançamento do Moonlight para o `pair` |
 | `host_status` / `host_update_settings` / `host_stop` / `host_doctor` | Rotas assinadas. `host_status` guarda MAC, cabo/Wi-Fi e capacidade do PC. Um 401 apaga a chave, exceto quando o erro é de relógio |
+| `moonlight_update_check(force)` / `update_moonlight` | `flatpak remote-ls --updates --user|--system --app` (cache de 6 h) e `flatpak update` na mesma instalação do `flatpak info`; numa instalação de sistema sem permissão, manda usar a Discover. `_env()` força `LC_ALL=C.UTF-8` para ler os rótulos em inglês |
 | `reach_host` | Antes de conectar: tenta o IP salvo (`/api/hello`, 2 s); se falhar, distingue Deck sem rede (`nmcli -t -f STATE general`) de PC fora do ar, e procura o PC pelo nome na busca UDP, atualizando o IP se o DHCP mudou. Também é usado quando o status falha |
 | `wake_host` | §3.4. Não manda Wake-on-LAN se o próprio Deck está sem rede |
 | `test_connection` | `tcp_rtt` (20 *handshakes* TCP com timeout de 1 s: mede o RTT sem precisar de root, ao contrário do ICMP), `deck_network` (via `nmcli`: cabo no dock ou Wi-Fi com faixa, sinal e taxa) e `verdict` (dicas) |

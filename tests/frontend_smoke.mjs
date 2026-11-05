@@ -52,7 +52,7 @@ globalThis.window = {
 
 // ---------- fake backend (mirrors main.py responses)
 const be = {
-  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", motion: "dsu", layout: "auto", polls: 0, online: true,
+  hosts: {}, active: "", shortcut_app_id: 0, fps: 60, preset: "low_latency", motion: "dsu", layout: "auto", polls: 0, online: true, mlVersion: "6.1.0", mlLatest: "6.2.0",
   hostSettings: { mode: "extend", position: "right", scale: 1, orientation: "landscape", profile: "desktop",
     open_app: true, close_app: false, custom: { rules: [], fullscreen: true, command: "" } },
 };
@@ -69,7 +69,10 @@ const backend = {
     for (const k of ["fps", "preset", "motion", "layout"]) if (k in p) be[k] = p[k];
     return settings();
   },
-  moonlight_status: () => ({ installed: true }),
+  moonlight_status: () => ({ installed: true, version: be.mlVersion, installation: "user" }),
+  moonlight_update_check: () => ({ ok: true, current: be.mlVersion, latest: be.mlLatest, available: !!be.mlLatest }),
+  update_moonlight: () => { log.push("ml-update"); const before = be.mlVersion; be.mlVersion = be.mlLatest || be.mlVersion; be.mlLatest = "";
+    return { ok: true, before, after: be.mlVersion, changed: before !== be.mlVersion }; },
   controller_layout: () => be.motion === "direct" || be.layout === "steam" ? { ok: true, url: "", mode: be.layout }
     : { ok: true, mode: be.layout, url: `template://controller_neptune_deckscreen_${be.layout === "auto" ? (be.hostSettings.profile === "desktop" ? "desktop" : "game") : be.layout}.vdf` },
   motion_status: () => ({ running: true, port: 26760, mode: be.motion, deck_ip: "192.168.0.20", clients: ["192.168.0.10"], imu_active: false }),
@@ -85,7 +88,7 @@ const backend = {
   },
   reach_host: () => be.deckOffline ? { ok: false, reason: "deck_offline" } : be.online ? { ok: true } : { ok: false, reason: "pc_offline" },
   host_status: () => be.online
-    ? { ok: true, code: 200, data: { name: "cachyos-pc", version: "2.0.0", capability: "virtual", desktop: "kde", settings: be.hostSettings,
+    ? { ok: true, code: 200, data: { name: "cachyos-pc", version: "2.0.0", capability: "virtual", desktop: "kde", settings: be.hostSettings, sunshine_update: be.sunshineUpdate,
         display: { active: false, output: null, last_error: null, session: null },
         diagnostics: { krfb: true, kscreen: true, wayland: true, sunshine_api: true, desktop: "kde", capability: "virtual" } } }
     : { ok: false, code: 0, error: "PC não respondeu" },
@@ -240,6 +243,17 @@ tree = await click("Diagnóstico do PC");
 assert.ok(text({ kids: tree }).includes("✔ krfb"), "doctor shown");
 tree = await click("Encerrar");
 assert.ok(log.includes("host_stop"));
+// Moonlight update (found when the panel opened) + Sunshine update reported by the PC
+be.sunshineUpdate = { current: "2025.924.1-1", latest: "2026.1102.1-1", how: "sudo pacman -Syu" };
+await tick(4200);
+tree = await render();
+assert.ok(text({ kids: tree }).includes("Sunshine 2025.924.1-1 → 2026.1102.1-1 disponível. No PC, rode: sudo pacman -Syu"), "Sunshine update shown");
+assert.ok(text({ kids: tree }).includes("Atualização disponível: 6.1.0 → 6.2.0"), "Moonlight update offered");
+tree = await click("Atualizar Moonlight");
+assert.ok(log.includes("ml-update"), "Moonlight updated");
+tree = await render();
+assert.ok(!text({ kids: tree }).includes("Atualização disponível"), "offer gone after updating");
+assert.ok(buttons(tree).some((b) => text(b).includes("Moonlight 6.2.0: procurar atualização")), "manual check shows version");
 // offline -> wake
 be.online = false;
 tree = await render();

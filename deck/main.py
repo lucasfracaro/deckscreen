@@ -126,6 +126,7 @@ def _env() -> dict:
     env["HOME"] = decky.DECKY_USER_HOME
     env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
     env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+    env["LC_ALL"] = "C.UTF-8"     # parse English labels (flatpak info, nmcli) whatever the Deck's language
     return env
 
 
@@ -236,6 +237,16 @@ def moonlight_paired(ip: str, name: str, home: str = "") -> bool:
         return False
     return any(h["paired"] and (ip in h["addresses"] or (name and h["name"].lower() == name.lower()))
                for h in moonlight_hosts(text))
+
+
+def flatpak_info(text: str) -> dict:
+    """`flatpak info` -> {"version", "installation", ...}; _run forces the C locale, so labels are English."""
+    out = {}
+    for line in text.splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
 
 
 def deck_online():
@@ -584,10 +595,63 @@ class Plugin:
         def check():
             try:
                 p = _run(["flatpak", "info", MOONLIGHT_ID], timeout=20)
-                return {"installed": p.returncode == 0}
             except (OSError, subprocess.TimeoutExpired) as e:
                 return {"installed": False, "error": str(e)}
+            if p.returncode != 0:
+                return {"installed": False}
+            info = flatpak_info(p.stdout)
+            return {"installed": True, "version": info.get("version", ""),
+                    "installation": info.get("installation", "")}
         return await asyncio.to_thread(check)
+
+    _ml_update_cache = {"t": 0.0, "data": None}
+
+    async def moonlight_update_check(self, force: bool = False):
+        """Is there a newer Moonlight on Flathub? Cached 6 h (it hits the network)."""
+        c = Plugin._ml_update_cache
+        if not force and c["data"] is not None and time.monotonic() - c["t"] < 6 * 3600:
+            return c["data"]
+        st = await self.moonlight_status()
+        if not st.get("installed"):
+            return {"ok": False, "error": "Moonlight não instalado"}
+        scope = "--system" if st.get("installation") == "system" else "--user"
+        try:
+            p = await asyncio.to_thread(
+                _run, ["flatpak", "remote-ls", "--updates", scope, "--app", "--columns=application,version"], 90)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"ok": False, "error": str(e)}
+        if p.returncode != 0:
+            return {"ok": False, "error": (p.stderr or p.stdout).strip()[-200:]}
+        latest = ""
+        for line in p.stdout.splitlines():
+            cols = line.split("\t")
+            if cols and cols[0].strip() == MOONLIGHT_ID:
+                latest = cols[1].strip() if len(cols) > 1 and cols[1].strip() else "nova versão"
+        data = {"ok": True, "current": st.get("version", ""), "latest": latest, "available": bool(latest),
+                "installation": st.get("installation", "")}
+        c["t"], c["data"] = time.monotonic(), data
+        return data
+
+    async def update_moonlight(self):
+        before = await self.moonlight_status()
+        if not before.get("installed"):
+            return {"ok": False, "error": "Moonlight não instalado"}
+        system = before.get("installation") == "system"
+        cmd = ["flatpak", "update", "--system" if system else "--user", "-y", "--noninteractive", MOONLIGHT_ID]
+        try:
+            p = await asyncio.to_thread(_run, cmd, 900)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return {"ok": False, "error": str(e)}
+        if p.returncode != 0:
+            decky.logger.error("%s -> %s", cmd, p.stderr)
+            if system:
+                return {"ok": False, "error": "O Moonlight foi instalado para todo o sistema e o plugin não tem "
+                                              "permissão para atualizá-lo. Atualize pela Discover no Modo Desktop."}
+            return {"ok": False, "error": (p.stderr or p.stdout).strip()[-300:]}
+        after = await self.moonlight_status()
+        Plugin._ml_update_cache = {"t": 0.0, "data": None}
+        return {"ok": True, "before": before.get("version", ""), "after": after.get("version", ""),
+                "changed": before.get("version") != after.get("version")}
 
     async def install_moonlight(self):
         def install():

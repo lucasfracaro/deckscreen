@@ -16,6 +16,7 @@ pub mod net;
 pub mod pairing;
 pub mod sunshine;
 #[macro_use]
+pub mod updates;
 pub mod util;
 
 use json::Json;
@@ -46,6 +47,7 @@ Interno
   hook start|stop chamado pelo Sunshine ao abrir/fechar o app DeckScreen
   sunshine-login [set]   mostra (ou troca) o login da interface web do Sunshine
   fix-input [--yes]      corrige o controle/mouse virtual (uinput, uhid, grupo input)
+  update-sunshine [--yes] procura e instala uma versão nova do Sunshine
   setup           só reconfigura o Sunshine
   gnome-virtual on|off   força o monitor extra no GNOME (Sunshine com portal_virtual_display)
   version
@@ -245,6 +247,7 @@ fn run(args: Vec<String>) -> i32 {
                 2
             }
         },
+        "update-sunshine" => updates::update(rest.iter().any(|a| a == "--yes" || a == "-y")),
         "fix-input" => {
             if input::fix(rest.iter().any(|a| a == "--yes" || a == "-y")) {
                 0

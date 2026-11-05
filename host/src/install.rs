@@ -136,7 +136,7 @@ fn arch() -> String {
         .unwrap_or_else(|| "x86_64".into())
 }
 
-fn download_sunshine_appimage() -> Result<String, String> {
+pub fn download_sunshine_appimage() -> Result<String, String> {
     download_appimage_from("LizardByte/Sunshine", "Sunshine.AppImage")
 }
 
@@ -166,6 +166,12 @@ fn download_appimage_from(repo: &str, dest_name: &str) -> Result<String, String>
         return Err("download falhou".into());
     }
     util::run("chmod", &["+x", &dest.to_string_lossy()]);
+    // remember which release this is: an AppImage has no package database to ask later
+    let _ = std::fs::create_dir_all(util::data_dir());
+    let _ = std::fs::write(
+        util::data_dir().join(format!("{dest_name}.version")),
+        j.str_at("tag_name"),
+    );
     Ok(dest.to_string_lossy().into_owned())
 }
 

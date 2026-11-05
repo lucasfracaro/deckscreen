@@ -239,6 +239,12 @@ impl State {
             "desktop" => self.desktop.id(),
             "capability" => display::capability(self.desktop),
         };
+        if let Some(c) = crate::updates::cached().filter(|c| c.newer()) {
+            st.set(
+                "sunshine_update",
+                obj! {"current" => c.current.clone(), "latest" => c.latest.clone(), "how" => c.how()},
+            );
+        }
         if let Some(ip) = peer_ip {
             let ip = ip.to_string();
             st.set(
@@ -569,6 +575,16 @@ pub fn run(verbose: bool) -> i32 {
     match UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT)) {
         Ok(sock) => {
             std::thread::spawn(move || discovery_loop(sock, desktop));
+            // look for a newer Sunshine shortly after start and every 6 h (cached for status/doctor)
+            std::thread::spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_secs(90));
+                if let Some(c) = crate::updates::check(false) {
+                    if c.newer() {
+                        crate::info!("Sunshine {} → {} disponível ({})", c.current, c.latest, c.how());
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(6 * 3600 - 90));
+            });
         }
         Err(e) => crate::warn!("busca automática desativada (udp/{DISCOVERY_PORT}): {e}"),
     }
