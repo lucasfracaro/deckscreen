@@ -589,6 +589,9 @@ pub fn install(o: &Opts) -> i32 {
         "backups em {}/*.deckscreen-bak.*",
         util::sunshine_dir().display()
     ));
+    for n in crate::gpu::apply(&cfg) {
+        ok(&n);
+    }
 
     say("Serviços");
     let unit_dir = util::user_unit_dir();
@@ -691,6 +694,7 @@ pub fn uninstall(yes: bool) -> i32 {
     for s in ["app-dev.lizardbyte.app.Sunshine.service", "sunshine.service"] {
         let _ = std::fs::remove_file(unit_dir.join(format!("{s}.d")).join("deckscreen.conf"));
     }
+    crate::gpu::remove();
     util::run("systemctl", &["--user", "daemon-reload"]);
     for t in ["kpackagetool6", "kpackagetool"] {
         if util::which(t).is_some() {

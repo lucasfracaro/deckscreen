@@ -83,6 +83,7 @@ deckscreen/
 │   │   ├── doctor.rs             diagnóstico e relatório
 │   │   ├── input.rs              controle virtual: /dev/uinput, /dev/uhid, regra udev, grupo input
 │   │   ├── updates.rs            versão nova do Sunshine (repo, AUR ou AppImage) e update-sunshine
+│   │   ├── gpu.rs                notebook híbrido: Sunshine na GPU integrada, estado de energia da NVIDIA
 │   │   ├── net.rs                interface, MAC, cabo/Wi-Fi, estado do Wake-on-LAN
 │   │   ├── http.rs               servidor e cliente HTTP/1.1 mínimos
 │   │   ├── json.rs               tipo JSON, parser e serializador
@@ -496,6 +497,16 @@ A mudança é **genérica**: o monitor virtual assume a resolução que o client
 - `check()` busca a versão mais nova: repo → `checkupdates` (base de dados própria, sem root; saída 2 = nada novo), com `pacman -Si` como alternativa; AUR → RPC v5 do AUR; AppImage → `releases/latest` do GitHub. O resultado fica em `~/.local/share/deckscreen/sunshine-update.json` por 6 h ou até a versão instalada mudar. `cmp_versions` compara só os números (`v2026.1.0`, `2025.924.154138-2`).
 - O daemon verifica 90 s depois de iniciar e a cada 6 h; o `status` leva `sunshine_update` (só do cache, sem rede) e o plugin mostra o aviso. O `doctor` mostra a linha "Atualização do Sunshine".
 - `update-sunshine`: repo → `sudo pacman -Syu` (no Arch não se atualiza um pacote isolado); AUR → `paru`/`yay -Syu`; AppImage → baixa de novo. Depois reinicia o serviço do Sunshine.
+
+### Notebook híbrido (`gpu.rs`)
+
+Sem ajuste, o Sunshine testa o NVENC primeiro (cria um contexto CUDA) e o glvnd/Vulkan carregam as bibliotecas da NVIDIA: a placa dedicada acorda e não dorme mais. Num notebook híbrido o KWin compõe na GPU integrada, então os buffers da captura já estão nela, e codificar com VA-API ali é o caminho sem cópia. Os jogos continuam na NVIDIA (PRIME offload) e só a acordam enquanto rodam.
+
+- `list()` lê `/sys/class/drm/renderD*` (vendor, endereço PCI, driver); `hybrid()` = NVIDIA (`0x10de`) + Intel ou AMD.
+- Modo em `config.json` → `sunshine.gpu`: `auto` (fixa se for híbrido), `igpu` ou `any`.
+- `apply()`: `encoder = vaapi` e `adapter_name = /dev/dri/by-path/pci-…-render` (o número `renderD` pode trocar entre boots) no `sunshine.conf`, e o drop-in `deckscreen-gpu.conf` no serviço do Sunshine com `__EGL_VENDOR_LIBRARY_FILENAMES` (Mesa), `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` (radeon ou intel) e `__GLX_VENDOR_LIBRARY_NAME=mesa`. Com `encoder` forçado, o Sunshine só valida esse encoder; se o VA-API falhar, ele volta a testar os outros.
+- `remove()` desfaz só o que é nosso (`encoder = vaapi` com `adapter_name` em `/dev/dri/`). Roda no `gpu any` e no `uninstall`.
+- Diagnóstico: "GPU do Sunshine" e "NVIDIA em repouso" (`power/runtime_status`, `power/control` do dispositivo PCI e os processos do usuário com `/dev/nvidia*` aberto).
 
 ---
 

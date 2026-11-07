@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod daemon;
 pub mod display;
 pub mod doctor;
+pub mod gpu;
 pub mod http;
 pub mod input;
 pub mod install;
@@ -48,6 +49,7 @@ Interno
   sunshine-login [set]   mostra (ou troca) o login da interface web do Sunshine
   fix-input [--yes]      corrige o controle/mouse virtual (uinput, uhid, grupo input)
   update-sunshine [--yes] procura e instala uma versão nova do Sunshine
+  gpu [auto|igpu|any]    notebook híbrido: Sunshine na GPU integrada para a NVIDIA poder dormir
   setup           só reconfigura o Sunshine
   gnome-virtual on|off   força o monitor extra no GNOME (Sunshine com portal_virtual_display)
   version
@@ -247,6 +249,7 @@ fn run(args: Vec<String>) -> i32 {
                 2
             }
         },
+        "gpu" => gpu::command(rest.first().map(String::as_str)),
         "update-sunshine" => updates::update(rest.iter().any(|a| a == "--yes" || a == "-y")),
         "fix-input" => {
             if input::fix(rest.iter().any(|a| a == "--yes" || a == "-y")) {

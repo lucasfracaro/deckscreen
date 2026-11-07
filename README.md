@@ -151,6 +151,7 @@ deckscreen-host sunshine-login       # mostra o usuário e a senha da interface 
 deckscreen-host sunshine-login set   # troca o login (no Sunshine e no DeckScreen ao mesmo tempo)
 deckscreen-host fix-input            # corrige o controle/mouse virtual (botões e trackpad do Deck)
 deckscreen-host update-sunshine      # procura e instala uma versão nova do Sunshine
+deckscreen-host gpu [igpu|any|auto]  # notebook híbrido: Sunshine na GPU integrada (a NVIDIA pode dormir)
 deckscreen-host uninstall   # remove do PC
 ```
 
@@ -164,6 +165,7 @@ deckscreen-host uninstall   # remove do PC
 | O Sunshine pede usuário e senha no navegador | Foi o instalador que criou esse login: veja com `deckscreen-host sunshine-login` ou troque com `deckscreen-host sunshine-login set` |
 | "Não acessa o Sunshine" | A senha da interface web mudou por fora: rode `deckscreen-host sunshine-login set` |
 | A tela aparece, mas botões e trackpad do Deck não fazem nada | Reinicie o PC se o kernel foi atualizado; depois rode `deckscreen-host fix-input` (carrega `uinput`/`uhid`, instala a regra udev do Sunshine e coloca você no grupo `input`) e saia/entre na sessão |
+| No notebook, a NVIDIA não dorme com o Sunshine aberto | Em notebook híbrido (NVIDIA + AMD/Intel integrada) o instalador já fixa o Sunshine na integrada (VA-API) e limita EGL/Vulkan ao Mesa só para ele; a NVIDIA fica livre para dormir e acorda só para os jogos. Confira com `deckscreen-host gpu`. Se ela continuar acordada, o diagnóstico mostra quem está usando, ou se o desligamento automático da NVIDIA está desativado no sistema |
 | Como atualizar o Moonlight e o Sunshine? | **Moonlight (Deck):** quando houver versão nova, o plugin mostra "Atualizar Moonlight"; também dá para procurar na seção Deck. **Sunshine (PC):** o diagnóstico e o plugin avisam quando há versão nova; rode `deckscreen-host update-sunshine` (pacote do CachyOS: é o `sudo pacman -Syu` de sempre; AUR: `paru`/`yay -Syu`; AppImage: baixa a nova). Reinicie o PC se o kernel também mudou |
 | Depois de uma queda, o plugin tenta "ligar o PC" | Atualize (2.4+): antes de conectar o plugin confere a rede de novo, acha o PC mesmo se o IP mudou e avisa quando é o Deck que está sem Wi-Fi |
 | Trackpad não clica / gatilhos não clicam | O layout padrão da Steam para atalhos usa os trackpads como analógicos. Deixe **Controles** em *Automático* ou *Área de trabalho*. Na primeira vez, **reinicie a Steam** (o plugin mostra o botão): a Steam só enxerga layouts novos depois de reiniciar. Confira em atalho DeckScreen → controle → Templates → "DeckScreen: Área de trabalho" |

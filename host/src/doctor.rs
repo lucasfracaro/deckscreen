@@ -117,6 +117,9 @@ pub fn checks(desktop: Desktop) -> Vec<Check> {
         )),
         None => v.push(c("Sunshine instalado", "fail", "não encontrado")),
     }
+    for (name, status, detail) in crate::gpu::doctor_lines(&Config::load_default()) {
+        v.push(c(name, status, detail));
+    }
     if let Some((status, detail)) = crate::updates::doctor_line() {
         v.push(c("Atualização do Sunshine", status, detail));
     }
